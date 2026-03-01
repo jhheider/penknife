@@ -13,11 +13,11 @@ use std::io;
 use std::panic;
 use std::time::Duration;
 
+use crossterm::ExecutableCommand;
 use crossterm::event::KeyEventKind;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 
 use app::App;
@@ -47,10 +47,10 @@ async fn main() -> color_eyre::Result<()> {
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
         // Poll for keyboard events (50ms timeout)
-        if let Some(key) = event::poll_key(Duration::from_millis(50)) {
-            if key.kind == KeyEventKind::Press {
-                app.handle_key(key);
-            }
+        if let Some(key) = event::poll_key(Duration::from_millis(50))
+            && key.kind == KeyEventKind::Press
+        {
+            app.handle_key(key);
         }
 
         // Drain async events

@@ -2,6 +2,7 @@ use sha2::{Digest, Sha256};
 
 use chrono::Utc;
 use gist_rs::GistClient;
+use ratatui::style::Color;
 
 use crate::error::Result;
 use crate::store::{FileEntry, Store};
@@ -25,11 +26,21 @@ pub enum SyncStatus {
 impl SyncStatus {
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Synced => "✓",
-            Self::LocalNewer => "↑",
-            Self::RemoteNewer => "↓",
-            Self::Conflict => "!",
-            Self::NotGisted => "·",
+            Self::Synced => "✅",
+            Self::LocalNewer => "⬆️",
+            Self::RemoteNewer => "⬇️",
+            Self::Conflict => "❗",
+            Self::NotGisted => "⚪",
+        }
+    }
+
+    pub fn color(self) -> Color {
+        match self {
+            Self::Synced => Color::Green,
+            Self::LocalNewer => Color::Yellow,
+            Self::RemoteNewer => Color::Blue,
+            Self::Conflict => Color::Red,
+            Self::NotGisted => Color::DarkGray,
         }
     }
 }
@@ -41,8 +52,8 @@ pub fn local_status(local_content: &str, entry: Option<&FileEntry>) -> SyncStatu
     };
     let local_hash = sha256_hex(local_content);
     let local_changed = local_hash != entry.local_sha256;
-    let remote_changed = entry.remote_sha256 != entry.local_sha256
-        && entry.remote_sha256 != local_hash;
+    let remote_changed =
+        entry.remote_sha256 != entry.local_sha256 && entry.remote_sha256 != local_hash;
 
     match (local_changed, remote_changed) {
         (false, false) => SyncStatus::Synced,

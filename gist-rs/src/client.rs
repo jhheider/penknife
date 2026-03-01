@@ -29,23 +29,28 @@ impl GistClient {
             .header(ACCEPT, "application/vnd.github+json")
     }
 
+    /// List a single page of gists (100 per page). Returns empty vec when no more pages.
+    pub async fn list_page(&self, page: u32) -> Result<Vec<Gist>> {
+        let url = format!("{API_BASE}/gists?per_page=100&page={page}");
+        let resp = self.request(reqwest::Method::GET, &url).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let msg = resp.text().await.unwrap_or_default();
+            return Err(GistError::Api {
+                status: status.as_u16(),
+                message: msg,
+            });
+        }
+        Ok(resp.json().await?)
+    }
+
     /// List all gists for the authenticated user, paginating automatically.
     pub async fn list_all(&self) -> Result<Vec<Gist>> {
         let mut all = Vec::new();
         let mut page = 1u32;
 
         loop {
-            let url = format!("{API_BASE}/gists?per_page=100&page={page}");
-            let resp = self.request(reqwest::Method::GET, &url).send().await?;
-            let status = resp.status();
-            if !status.is_success() {
-                let msg = resp.text().await.unwrap_or_default();
-                return Err(GistError::Api {
-                    status: status.as_u16(),
-                    message: msg,
-                });
-            }
-            let gists: Vec<Gist> = resp.json().await?;
+            let gists = self.list_page(page).await?;
             if gists.is_empty() {
                 break;
             }
@@ -111,10 +116,7 @@ impl GistClient {
     /// Delete a gist.
     pub async fn delete(&self, id: &str) -> Result<()> {
         let url = format!("{API_BASE}/gists/{id}");
-        let resp = self
-            .request(reqwest::Method::DELETE, &url)
-            .send()
-            .await?;
+        let resp = self.request(reqwest::Method::DELETE, &url).send().await?;
         let status = resp.status();
         if status == StatusCode::NO_CONTENT {
             return Ok(());

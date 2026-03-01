@@ -12,28 +12,29 @@ use crate::app::{App, Mode};
 
 /// Render the full UI.
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(f.area());
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
 
     let main_area = chunks[0];
     let status_area = chunks[1];
 
     // Main area: tree (40%) | preview/diff (60%)
-    let panes = Layout::horizontal([
-        Constraint::Percentage(40),
-        Constraint::Percentage(60),
-    ])
-    .split(main_area);
+    let panes = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(main_area);
 
     // Tree pane
-    let tree_block = Block::default().borders(Borders::ALL).title("Files");
+    let tree_block = Block::default()
+        .borders(Borders::ALL)
+        .title("📄 Files")
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     let tree_widget = Tree::new(&app.tree_items)
         .expect("tree widget")
         .block(tree_block)
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::White));
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
 
     f.render_stateful_widget(tree_widget, panes[0], &mut app.tree_state);
 
@@ -52,7 +53,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Status bar
     let status_text = &app.status_message;
     let status = Paragraph::new(status_text.clone())
-        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        .style(Style::default().bg(Color::DarkGray).fg(app.status_color));
     f.render_widget(status, status_area);
 
     // Modal overlays
@@ -80,13 +81,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 &app.input_editor,
             );
         }
-        Mode::Hydrating { progress, .. } => {
-            if let Some(p) = progress {
-                dialogs::render_hydration_progress(f, f.area(), p);
-            }
+        Mode::Hydrating {
+            progress: Some(p), ..
+        } => {
+            dialogs::render_hydration_progress(f, f.area(), p);
         }
         Mode::Message(msg) => {
             dialogs::render_message(f, f.area(), msg);
+        }
+        Mode::RootSwitcher { .. } => {
+            dialogs::render_root_switcher(f, f.area(), app);
+        }
+        Mode::SetupRoot | Mode::AddRoot => {
+            dialogs::render_setup_root(f, f.area(), app);
         }
         _ => {}
     }

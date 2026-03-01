@@ -21,6 +21,8 @@ pub fn render_diff(f: &mut Frame, area: Rect, local: &str, remote: &str, title: 
         .borders(Borders::ALL)
         .title(format!("Diff: {title}"));
 
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     f.render_widget(paragraph, area);
 }

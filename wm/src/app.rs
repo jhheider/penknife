@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::Color;
 use tui_tree_widget::TreeState;
 
 use crate::config::Config;
@@ -18,12 +19,26 @@ pub enum Mode {
     Normal,
     Help,
     Search,
-    Diff { local: String, remote: String },
-    Confirm { message: String, action: ConfirmAction },
+    Diff {
+        local: String,
+        remote: String,
+    },
+    Confirm {
+        message: String,
+        action: ConfirmAction,
+    },
     GdocUrl,
     GdocFilename,
-    Hydrating { progress: Option<HydrationProgress>, done: bool },
+    Hydrating {
+        progress: Option<HydrationProgress>,
+        done: bool,
+    },
     Message(String),
+    RootSwitcher {
+        selected: usize,
+    },
+    AddRoot,
+    SetupRoot,
 }
 
 #[derive(Debug)]
@@ -41,6 +56,7 @@ pub struct App {
     pub mode: Mode,
     pub preview_content: String,
     pub status_message: String,
+    pub status_color: Color,
     pub search_editor: LineEditor,
     pub search_filter: String,
     pub input_editor: LineEditor,
@@ -48,15 +64,27 @@ pub struct App {
     pub should_quit: bool,
     pub async_tx: AsyncSender,
     pub token: Option<String>,
+    pub active_root: usize,
 }
 
 impl App {
     pub fn new(async_tx: AsyncSender) -> Result<Self> {
         let config = Config::load()?;
-        let store = Store::load(&config.root)?;
-        let files = scanner::scan_directory(&config.root)?;
+        let store = Store::load()?;
 
         let token = gist_rs::auth::resolve_token().ok();
+
+        let start_mode = if config.roots.is_empty() {
+            Mode::SetupRoot
+        } else {
+            Mode::Normal
+        };
+
+        let files = if config.roots.is_empty() {
+            Vec::new()
+        } else {
+            scanner::scan_directory(&config.roots[0]).unwrap_or_default()
+        };
 
         let mut app = App {
             config,
@@ -65,9 +93,10 @@ impl App {
             tree_items: Vec::new(),
             tree_identifiers: Vec::new(),
             tree_state: TreeState::default(),
-            mode: Mode::Normal,
+            mode: start_mode,
             preview_content: String::new(),
             status_message: String::new(),
+            status_color: Color::White,
             search_editor: LineEditor::new(),
             search_filter: String::new(),
             input_editor: LineEditor::new(),
@@ -75,10 +104,16 @@ impl App {
             should_quit: false,
             async_tx,
             token,
+            active_root: 0,
         };
         app.rebuild_tree();
         app.update_status();
         Ok(app)
+    }
+
+    /// Get the current root directory, if any.
+    fn current_root(&self) -> Option<&PathBuf> {
+        self.config.roots.get(self.active_root)
     }
 
     pub fn rebuild_tree(&mut self) {
@@ -88,10 +123,23 @@ impl App {
     }
 
     pub fn refresh_files(&mut self) -> Result<()> {
-        self.files = scanner::scan_directory(&self.config.root)?;
+        if let Some(root) = self.current_root() {
+            self.files = scanner::scan_directory(root)?;
+        } else {
+            self.files.clear();
+        }
         self.rebuild_tree();
         self.update_preview();
         Ok(())
+    }
+
+    /// Switch to a different root by index.
+    fn switch_root(&mut self, index: usize) {
+        if index < self.config.roots.len() {
+            self.active_root = index;
+            let _ = self.refresh_files();
+            self.update_status();
+        }
     }
 
     /// Get the currently selected file's rel_path (if it's a leaf file, not a directory).
@@ -102,16 +150,16 @@ impl App {
         }
         let id = selected.last()?.clone();
         // It's a file if it ends with .md
-        if id.ends_with(".md") {
-            Some(id)
-        } else {
-            None
-        }
+        if id.ends_with(".md") { Some(id) } else { None }
     }
 
     /// Get the absolute path for a rel_path.
     pub fn abs_path(&self, rel_path: &str) -> PathBuf {
-        self.config.root.join(rel_path)
+        if let Some(root) = self.current_root() {
+            root.join(rel_path)
+        } else {
+            PathBuf::from(rel_path)
+        }
     }
 
     pub fn update_preview(&mut self) {
@@ -132,12 +180,18 @@ impl App {
             } else {
                 sync::SyncStatus::NotGisted
             };
+            self.status_color = status.color();
             let url = entry.map(|e| e.url.as_str()).unwrap_or("no gist");
             self.status_message = format!("{} {} | {url}", status.icon(), rel);
         } else {
+            self.status_color = Color::White;
             let total = self.files.len();
             let tracked = self.store.files.len();
-            self.status_message = format!("{total} files | {tracked} tracked");
+            let root_label = self
+                .current_root()
+                .map(|r| r.display().to_string())
+                .unwrap_or_else(|| "(no root)".into());
+            self.status_message = format!("{total} files | {tracked} tracked | 📂 {root_label}");
         }
     }
 
@@ -222,7 +276,7 @@ impl App {
             Mode::Hydrating { done, .. } => {
                 if *done {
                     self.mode = Mode::Normal;
-                    self.rebuild_tree();
+                    let _ = self.refresh_files();
                     self.update_status();
                 }
                 return;
@@ -230,6 +284,104 @@ impl App {
             Mode::Diff { .. } => {
                 // Any key exits diff
                 self.mode = Mode::Normal;
+                return;
+            }
+            Mode::RootSwitcher { selected } => {
+                let sel = *selected;
+                match key.code {
+                    KeyCode::Esc => {
+                        self.mode = Mode::Normal;
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        let max = self.config.roots.len().saturating_sub(1);
+                        self.mode = Mode::RootSwitcher {
+                            selected: (sel + 1).min(max),
+                        };
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        self.mode = Mode::RootSwitcher {
+                            selected: sel.saturating_sub(1),
+                        };
+                    }
+                    KeyCode::Enter => {
+                        self.mode = Mode::Normal;
+                        self.switch_root(sel);
+                    }
+                    KeyCode::Char('a') => {
+                        self.input_editor = LineEditor::new();
+                        self.mode = Mode::AddRoot;
+                    }
+                    KeyCode::Char('d') => {
+                        if sel < self.config.roots.len() {
+                            let _ = self.config.remove_root(sel);
+                            if self.config.roots.is_empty() {
+                                self.active_root = 0;
+                                self.files.clear();
+                                self.rebuild_tree();
+                                self.input_editor = LineEditor::new();
+                                self.mode = Mode::SetupRoot;
+                            } else {
+                                if self.active_root >= self.config.roots.len() {
+                                    self.active_root = self.config.roots.len() - 1;
+                                }
+                                let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
+                                self.mode = Mode::RootSwitcher { selected: new_sel };
+                                let _ = self.refresh_files();
+                                self.update_status();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            Mode::SetupRoot | Mode::AddRoot => {
+                match key.code {
+                    KeyCode::Esc => {
+                        if matches!(self.mode, Mode::AddRoot) {
+                            // Go back to root switcher
+                            self.mode = Mode::RootSwitcher {
+                                selected: self.active_root,
+                            };
+                        }
+                        // SetupRoot: no escape if no roots (must enter one)
+                        // But allow quit
+                    }
+                    KeyCode::Enter => {
+                        let raw = self.input_editor.content.trim().to_string();
+                        if raw.is_empty() {
+                            return;
+                        }
+                        let expanded = if let Some(rest) = raw.strip_prefix('~') {
+                            if let Some(home) = dirs::home_dir() {
+                                home.join(rest.strip_prefix('/').unwrap_or(rest))
+                            } else {
+                                PathBuf::from(&raw)
+                            }
+                        } else {
+                            PathBuf::from(&raw)
+                        };
+                        if !expanded.is_dir() {
+                            self.mode =
+                                Mode::Message(format!("Not a directory: {}", expanded.display()));
+                            return;
+                        }
+                        let _ = self.config.add_root(expanded);
+                        self.active_root = self.config.roots.len() - 1;
+                        let _ = self.refresh_files();
+                        self.update_status();
+                        self.mode = Mode::Normal;
+                    }
+                    KeyCode::Char('q')
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            && matches!(self.mode, Mode::SetupRoot) =>
+                    {
+                        self.should_quit = true;
+                    }
+                    _ => {
+                        self.input_editor.handle_key(key);
+                    }
+                }
                 return;
             }
             Mode::Normal => {}
@@ -269,7 +421,9 @@ impl App {
                 if let Some(ref rel) = self.selected_file() {
                     if self.store.get(rel).is_some() {
                         self.mode = Mode::Confirm {
-                            message: format!("Pull remote content for {rel}? Local changes will be overwritten."),
+                            message: format!(
+                                "Pull remote content for {rel}? Local changes will be overwritten."
+                            ),
                             action: ConfirmAction::SyncDown,
                         };
                     } else {
@@ -294,6 +448,11 @@ impl App {
             KeyCode::Char('I') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.input_editor = LineEditor::new();
                 self.mode = Mode::GdocUrl;
+            }
+            KeyCode::Tab => {
+                self.mode = Mode::RootSwitcher {
+                    selected: self.active_root,
+                };
             }
             _ => {}
         }
@@ -339,9 +498,14 @@ impl App {
             AsyncEvent::HydrationDone(result) => {
                 match result {
                     Ok(count) => {
+                        // Reload store from disk — hydration ran on a cloned store
+                        if let Ok(reloaded) = Store::load() {
+                            self.store = reloaded;
+                        }
                         if let Mode::Hydrating { progress, done } = &mut self.mode {
                             if let Some(p) = progress {
-                                p.phase = format!("Complete! Matched {count} files. Press any key.");
+                                p.phase =
+                                    format!("Complete! Matched {count} files. Press any key.");
                             }
                             *done = true;
                         }
@@ -404,7 +568,6 @@ impl App {
             let client = gist_rs::GistClient::new(token);
             let mut temp_store = Store {
                 version: 1,
-                root: std::path::PathBuf::new(),
                 files: std::collections::BTreeMap::new(),
             };
             if let Some(entry) = store_snapshot {
@@ -523,12 +686,14 @@ impl App {
             return;
         };
 
-        self.mode = Mode::Hydrating { progress: None, done: false };
+        self.mode = Mode::Hydrating {
+            progress: None,
+            done: false,
+        };
         let tx = self.async_tx.clone();
         let files = self.files.clone();
         let mut store = Store {
             version: self.store.version,
-            root: self.store.root.clone(),
             files: self.store.files.clone(),
         };
 
@@ -569,20 +734,23 @@ impl App {
             return;
         }
 
+        let Some(root) = self.current_root().cloned() else {
+            self.mode = Mode::Message("No root directory configured.".into());
+            return;
+        };
+
         // Save to the currently selected directory (or root)
         let dir = if let Some(selected) = self.selected_file() {
             // Go up to the parent directory
             let path = std::path::Path::new(&selected);
-            path.parent()
-                .map(|p| self.config.root.join(p))
-                .unwrap_or(self.config.root.clone())
+            path.parent().map(|p| root.join(p)).unwrap_or(root.clone())
         } else {
             // Use the selected tree node as directory
             let selected = self.tree_state.selected();
             if let Some(id) = selected.last() {
-                self.config.root.join(id)
+                root.join(id)
             } else {
-                self.config.root.clone()
+                root.clone()
             }
         };
 

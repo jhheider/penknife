@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use ratatui::prelude::*;
 use tui_tree_widget::TreeItem;
 
 use crate::scanner::ScannedFile;
@@ -18,7 +19,12 @@ pub fn build_tree<'a>(
     let mut tree: BTreeMap<String, BTreeMap<String, Vec<&ScannedFile>>> = BTreeMap::new();
 
     for file in files {
-        if !filter.is_empty() && !file.rel_path.to_lowercase().contains(&filter.to_lowercase()) {
+        if !filter.is_empty()
+            && !file
+                .rel_path
+                .to_lowercase()
+                .contains(&filter.to_lowercase())
+        {
             continue;
         }
 
@@ -90,7 +96,7 @@ pub fn build_tree<'a>(
                 }
                 identifiers.push(sub_id.clone());
                 game_children.push(
-                    TreeItem::new(sub_id, subdir.clone(), sub_children)
+                    TreeItem::new(sub_id, format_directory(subdir), sub_children)
                         .expect("tree item"),
                 );
             }
@@ -98,8 +104,7 @@ pub fn build_tree<'a>(
 
         identifiers.push(game_id.clone());
         items.push(
-            TreeItem::new(game_id, game.clone(), game_children)
-                .expect("tree item"),
+            TreeItem::new(game_id, format_directory(game), game_children).expect("tree item"),
         );
     }
 
@@ -115,11 +120,27 @@ fn file_status(file: &ScannedFile, store: &Store) -> SyncStatus {
     sync::local_status(&content, entry)
 }
 
-fn format_leaf(rel_path: &str, status: SyncStatus) -> String {
+fn format_leaf(rel_path: &str, status: SyncStatus) -> Line<'static> {
     let name = rel_path
         .rsplit('/')
         .next()
         .unwrap_or(rel_path)
         .trim_end_matches(".md");
-    format!("{} {name}", status.icon())
+    let icon = format!("{} ", status.icon());
+    Line::from(vec![
+        Span::raw(icon),
+        Span::styled(name.to_string(), Style::default().fg(status.color())),
+    ])
+}
+
+fn format_directory(name: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::raw("📁 "),
+        Span::styled(
+            name.to_string(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
 }

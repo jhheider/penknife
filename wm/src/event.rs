@@ -33,10 +33,10 @@ pub enum AsyncEvent {
 
 /// Poll for a crossterm key event with the given timeout.
 pub fn poll_key(timeout: Duration) -> Option<KeyEvent> {
-    if event::poll(timeout).ok()? {
-        if let Event::Key(key) = event::read().ok()? {
-            return Some(key);
-        }
+    if event::poll(timeout).ok()?
+        && let Event::Key(key) = event::read().ok()?
+    {
+        return Some(key);
     }
     None
 }

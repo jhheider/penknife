@@ -13,6 +13,8 @@ pub struct HydrationProgress {
     pub phase: String,
     pub matched: usize,
     pub total_gists: usize,
+    pub total_files: usize,
+    pub current_file: usize,
     pub ambiguous: Vec<AmbiguousMatch>,
 }
 
@@ -37,21 +39,49 @@ pub async fn hydrate(
     files: &[ScannedFile],
     mut progress_cb: impl FnMut(HydrationProgress),
 ) -> Result<usize> {
-    // Phase 1: Fetch all gists
+    let total_files = files.len();
+
+    // Phase 1: Fetch all gists page by page
     progress_cb(HydrationProgress {
-        phase: "Fetching all gists...".into(),
+        phase: "Fetching gists... page 1".into(),
         matched: 0,
         total_gists: 0,
+        total_files,
+        current_file: 0,
         ambiguous: vec![],
     });
 
-    let all_gists = client.list_all().await?;
+    let mut all_gists: Vec<Gist> = Vec::new();
+    let mut page = 1u32;
+    loop {
+        let gists = client.list_page(page).await?;
+        if gists.is_empty() {
+            break;
+        }
+        all_gists.extend(gists);
+        page += 1;
+        progress_cb(HydrationProgress {
+            phase: format!(
+                "Fetching gists... page {} ({} so far)",
+                page,
+                all_gists.len()
+            ),
+            matched: 0,
+            total_gists: all_gists.len(),
+            total_files,
+            current_file: 0,
+            ambiguous: vec![],
+        });
+    }
+
     let total_gists = all_gists.len();
 
     progress_cb(HydrationProgress {
         phase: format!("Fetched {total_gists} gists. Building index..."),
         matched: 0,
         total_gists,
+        total_files,
+        current_file: 0,
         ambiguous: vec![],
     });
 
@@ -72,20 +102,28 @@ pub async fn hydrate(
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        local_by_filename
-            .entry(filename)
-            .or_default()
-            .push(file);
+        local_by_filename.entry(filename).or_default().push(file);
     }
 
     let mut matched = 0usize;
     let mut ambiguous = Vec::new();
 
     // Phase 3: Unique matches
-    for file in files {
+    for (i, file) in files.iter().enumerate() {
         // Skip already-mapped files
         if store.get(&file.rel_path).is_some() {
             matched += 1;
+            // Send progress every 10 files
+            if i % 10 == 0 {
+                progress_cb(HydrationProgress {
+                    phase: format!("Matching files... ({}/{})", i + 1, total_files),
+                    matched,
+                    total_gists,
+                    total_files,
+                    current_file: i + 1,
+                    ambiguous: vec![],
+                });
+            }
             continue;
         }
 
@@ -97,10 +135,23 @@ pub async fn hydrate(
             .to_string();
 
         let Some(gists) = by_filename.get(&filename) else {
+            if i % 10 == 0 {
+                progress_cb(HydrationProgress {
+                    phase: format!("Matching files... ({}/{})", i + 1, total_files),
+                    matched,
+                    total_gists,
+                    total_files,
+                    current_file: i + 1,
+                    ambiguous: vec![],
+                });
+            }
             continue;
         };
 
-        let locals = local_by_filename.get(&filename).map(|v| v.len()).unwrap_or(0);
+        let locals = local_by_filename
+            .get(&filename)
+            .map(|v| v.len())
+            .unwrap_or(0);
 
         if gists.len() == 1 && locals == 1 {
             // Unique match
@@ -118,17 +169,30 @@ pub async fn hydrate(
             );
             matched += 1;
         }
+
+        if i % 10 == 0 {
+            progress_cb(HydrationProgress {
+                phase: format!("Matching files... ({}/{})", i + 1, total_files),
+                matched,
+                total_gists,
+                total_files,
+                current_file: i + 1,
+                ambiguous: vec![],
+            });
+        }
     }
 
     progress_cb(HydrationProgress {
         phase: format!("Unique matches: {matched}. Disambiguating..."),
         matched,
         total_gists,
+        total_files,
+        current_file: total_files,
         ambiguous: vec![],
     });
 
     // Phase 4: Disambiguate by content (SHA-256 compare)
-    for file in files {
+    for (i, file) in files.iter().enumerate() {
         if store.get(&file.rel_path).is_some() {
             continue;
         }
@@ -146,6 +210,16 @@ pub async fn hydrate(
         if gists.len() <= 1 {
             continue;
         }
+
+        // Per-file progress during disambiguation
+        progress_cb(HydrationProgress {
+            phase: format!("Disambiguating: {} ({}/{})", filename, i + 1, total_files),
+            matched,
+            total_gists,
+            total_files,
+            current_file: i + 1,
+            ambiguous: ambiguous.clone(),
+        });
 
         let local_content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
         let local_hash = sha256_hex(&local_content);
@@ -180,20 +254,18 @@ pub async fn hydrate(
 
         // If size filter didn't help enough, try fetching content
         if size_matches.is_empty() {
-            size_matches = gists.iter().copied().collect();
+            size_matches = gists.to_vec();
         }
 
         let mut content_match = None;
         for gist in &size_matches {
-            if let Ok(full_gist) = client.get(&gist.id).await {
-                if let Some(gf) = full_gist.files.get(&filename) {
-                    if let Some(ref content) = gf.content {
-                        if sha256_hex(content) == local_hash {
-                            content_match = Some(full_gist);
-                            break;
-                        }
-                    }
-                }
+            if let Ok(full_gist) = client.get(&gist.id).await
+                && let Some(gf) = full_gist.files.get(&filename)
+                && let Some(ref content) = gf.content
+                && sha256_hex(content) == local_hash
+            {
+                content_match = Some(full_gist);
+                break;
             }
         }
 
@@ -227,9 +299,14 @@ pub async fn hydrate(
     }
 
     progress_cb(HydrationProgress {
-        phase: format!("Done. Matched {matched} files, {} ambiguous.", ambiguous.len()),
+        phase: format!(
+            "Done. Matched {matched} files, {} ambiguous.",
+            ambiguous.len()
+        ),
         matched,
         total_gists,
+        total_files,
+        current_file: total_files,
         ambiguous,
     });
 

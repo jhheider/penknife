@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -19,16 +18,15 @@ pub struct FileEntry {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Store {
     pub version: u32,
-    pub root: PathBuf,
     pub files: BTreeMap<String, FileEntry>,
 }
 
 impl Store {
-    fn store_path() -> PathBuf {
+    fn store_path() -> std::path::PathBuf {
         Config::data_dir().join("store.json")
     }
 
-    pub fn load(root: &PathBuf) -> Result<Self> {
+    pub fn load() -> Result<Self> {
         let path = Self::store_path();
         if path.exists() {
             let data = std::fs::read_to_string(&path)?;
@@ -36,7 +34,6 @@ impl Store {
         } else {
             Ok(Self {
                 version: 1,
-                root: root.clone(),
                 files: BTreeMap::new(),
             })
         }

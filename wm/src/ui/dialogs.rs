@@ -1,6 +1,7 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
 
+use crate::app::App;
 use crate::hydrate::HydrationProgress;
 use crate::ui::input::LineEditor;
 
@@ -39,14 +40,25 @@ Keybindings:
   H            Hydrate (match gists to files)
   /            Search / filter
   I            Google Doc import
+  Tab          Switch root directory
   r            Refresh file tree
   ?            This help
   q            Quit
 
 Press any key to close.";
 
-    let block = Block::default().borders(Borders::ALL).title("Help");
-    let para = Paragraph::new(help_text).block(block).wrap(Wrap { trim: false });
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("❓ Help")
+        .border_style(Style::default().fg(Color::Cyan))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let para = Paragraph::new(help_text)
+        .block(block)
+        .wrap(Wrap { trim: false });
     f.render_widget(para, modal);
 }
 
@@ -56,37 +68,92 @@ pub fn render_search(f: &mut Frame, area: Rect, editor: &LineEditor) {
     f.render_widget(Clear, modal);
 
     let text = format!("/{}", editor.content);
-    let block = Block::default().borders(Borders::ALL).title("Search");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("🔍 Search")
+        .border_style(Style::default().fg(Color::Yellow))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
     let para = Paragraph::new(text).block(block);
     f.render_widget(para, modal);
 }
 
 /// Render a text input dialog with a prompt.
-pub fn render_input_dialog(f: &mut Frame, area: Rect, title: &str, prompt: &str, editor: &LineEditor) {
+pub fn render_input_dialog(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    prompt: &str,
+    editor: &LineEditor,
+) {
     let modal = modal_area(area, 60, 15);
     f.render_widget(Clear, modal);
 
     let text = format!("{prompt}\n\n> {}", editor.content);
-    let block = Block::default().borders(Borders::ALL).title(title.to_string());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title.to_string())
+        .border_style(Style::default().fg(Color::Cyan))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
     f.render_widget(para, modal);
 }
 
-/// Render hydration progress.
+/// Render hydration progress with a gauge bar.
 pub fn render_hydration_progress(f: &mut Frame, area: Rect, progress: &HydrationProgress) {
-    let modal = modal_area(area, 60, 20);
+    let modal = modal_area(area, 60, 25);
     f.render_widget(Clear, modal);
 
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("🔄 Hydration")
+        .border_style(Style::default().fg(Color::Yellow))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    // Split modal into text area and gauge
+    let inner = block.inner(modal);
+    f.render_widget(block, modal);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(3),
+        Constraint::Length(1), // spacer
+        Constraint::Length(1), // gauge
+    ])
+    .split(inner);
+
     let text = format!(
-        "{}\n\nMatched: {}\nTotal gists: {}\nAmbiguous: {}",
+        "{}\n\nMatched: {}  |  Total gists: {}  |  Ambiguous: {}",
         progress.phase,
         progress.matched,
         progress.total_gists,
         progress.ambiguous.len()
     );
-    let block = Block::default().borders(Borders::ALL).title("Hydration");
-    let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
-    f.render_widget(para, modal);
+    let para = Paragraph::new(text).wrap(Wrap { trim: false });
+    f.render_widget(para, chunks[0]);
+
+    // Gauge: use current_file / total_files if available
+    let ratio = if progress.total_files > 0 {
+        (progress.current_file as f64 / progress.total_files as f64).min(1.0)
+    } else if progress.total_gists > 0 {
+        (progress.matched as f64 / progress.total_gists as f64).min(1.0)
+    } else {
+        0.0
+    };
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(Color::Yellow).bg(Color::DarkGray))
+        .ratio(ratio);
+    f.render_widget(gauge, chunks[2]);
 }
 
 /// Render a confirmation dialog.
@@ -95,17 +162,117 @@ pub fn render_confirm(f: &mut Frame, area: Rect, message: &str) {
     f.render_widget(Clear, modal);
 
     let text = format!("{message}\n\n[y] Yes  [n] No");
-    let block = Block::default().borders(Borders::ALL).title("Confirm");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("⚠️  Confirm")
+        .border_style(Style::default().fg(Color::Red))
+        .title_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
     let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
     f.render_widget(para, modal);
 }
 
-/// Render a status message (non-modal, just a brief overlay).
+/// Render a status message overlay.
 pub fn render_message(f: &mut Frame, area: Rect, message: &str) {
     let modal = modal_area(area, 50, 10);
     f.render_widget(Clear, modal);
 
-    let block = Block::default().borders(Borders::ALL).title("Info");
-    let para = Paragraph::new(message.to_string()).block(block).wrap(Wrap { trim: false });
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("💬 Info")
+        .border_style(Style::default().fg(Color::Green))
+        .title_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        );
+    let para = Paragraph::new(message.to_string())
+        .block(block)
+        .wrap(Wrap { trim: false });
+    f.render_widget(para, modal);
+}
+
+/// Render root switcher dialog.
+pub fn render_root_switcher(f: &mut Frame, area: Rect, app: &App) {
+    let modal = modal_area(area, 60, 50);
+    f.render_widget(Clear, modal);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("📂 Root Directories")
+        .border_style(Style::default().fg(Color::Cyan))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let selected = if let crate::app::Mode::RootSwitcher { selected } = &app.mode {
+        *selected
+    } else {
+        0
+    };
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, root) in app.config.roots.iter().enumerate() {
+        let marker = if i == app.active_root { " ▶ " } else { "   " };
+        let style = if i == selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else if i == app.active_root {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::styled(format!("{marker}{}", root.display()), style));
+    }
+
+    if app.config.roots.is_empty() {
+        lines.push(Line::styled(
+            "  (no roots configured)".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "  Enter=switch  a=add  d=delete  Esc=close".to_string(),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let para = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    f.render_widget(para, modal);
+}
+
+/// Render setup/add root dialog.
+pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
+    let modal = modal_area(area, 60, 20);
+    f.render_widget(Clear, modal);
+
+    let is_setup = matches!(app.mode, crate::app::Mode::SetupRoot);
+    let title = if is_setup {
+        "👋 Welcome to Writings Manager"
+    } else {
+        "📂 Add Root Directory"
+    };
+    let prompt = if is_setup {
+        "Enter path to your writings folder:"
+    } else {
+        "Enter path to add:"
+    };
+
+    let text = format!("{prompt}\n\n> {}", app.input_editor.content);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
     f.render_widget(para, modal);
 }

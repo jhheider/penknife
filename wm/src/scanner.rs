@@ -28,15 +28,30 @@ fn walk_dir(root: &Path, dir: &Path, out: &mut Vec<ScannedFile>) -> Result<()> {
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
+        // Skip hidden entries
+        if path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+        {
+            continue;
+        }
         if path.is_dir() {
+            let before = out.len();
             walk_dir(root, &path, out)?;
+            // Prune directories that contained no markdown files
+            if out.len() == before {
+                continue;
+            }
         } else if path.extension().is_some_and(|e| e == "md") {
             let rel = path
                 .strip_prefix(root)
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();
-            let modified = entry.metadata()?.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            let modified = entry
+                .metadata()?
+                .modified()
+                .unwrap_or(SystemTime::UNIX_EPOCH);
             out.push(ScannedFile {
                 rel_path: rel,
                 abs_path: path,

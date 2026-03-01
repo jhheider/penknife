@@ -6,7 +6,7 @@ use crate::error::Result;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
-    pub root: PathBuf,
+    pub roots: Vec<PathBuf>,
 }
 
 impl Config {
@@ -24,11 +24,15 @@ impl Config {
         let path = Self::config_path();
         if path.exists() {
             let data = std::fs::read_to_string(&path)?;
-            Ok(serde_json::from_str(&data)?)
+            match serde_json::from_str::<Config>(&data) {
+                Ok(config) => Ok(config),
+                Err(e) => {
+                    eprintln!("Warning: invalid config, starting fresh: {e}");
+                    Ok(Config { roots: Vec::new() })
+                }
+            }
         } else {
-            let config = Self::auto_detect();
-            config.save()?;
-            Ok(config)
+            Ok(Config { roots: Vec::new() })
         }
     }
 
@@ -40,10 +44,19 @@ impl Config {
         Ok(())
     }
 
-    fn auto_detect() -> Self {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let dropbox = home.join("Dropbox/Personal/RP/shared");
-        let root = if dropbox.exists() { dropbox } else { home };
-        Config { root }
+    pub fn add_root(&mut self, path: PathBuf) -> Result<()> {
+        if !self.roots.contains(&path) {
+            self.roots.push(path);
+            self.save()?;
+        }
+        Ok(())
+    }
+
+    pub fn remove_root(&mut self, index: usize) -> Result<()> {
+        if index < self.roots.len() {
+            self.roots.remove(index);
+            self.save()?;
+        }
+        Ok(())
     }
 }
