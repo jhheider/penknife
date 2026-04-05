@@ -3751,6 +3751,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "gist-rs",
+ "hex",
  "ratatui",
  "reqwest",
  "serde",

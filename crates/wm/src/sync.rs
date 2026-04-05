@@ -11,7 +11,7 @@ use crate::store::{FileEntry, Store};
 pub fn sha256_hex(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
