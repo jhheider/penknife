@@ -12,7 +12,8 @@ tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 dirs = "6"
-sha2 = "0.10"
+hex = "0.4"
+sha2 = "0.11"
 similar = "3"
 arboard = "3"
 chrono = { workspace = true, features = ["serde"] }
