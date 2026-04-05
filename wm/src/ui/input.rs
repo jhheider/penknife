@@ -12,7 +12,7 @@ impl LineEditor {
         Self::default()
     }
 
-    pub fn with_content(content: &str) -> Self {
+    pub fn _with_content(content: &str) -> Self {
         Self {
             cursor: content.len(),
             content: content.to_string(),
