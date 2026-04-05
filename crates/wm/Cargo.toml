@@ -13,7 +13,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 dirs = "6"
 sha2 = "0.10"
-similar = "2"
+similar = "3"
 arboard = "3"
 chrono = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
