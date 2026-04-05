@@ -1,0 +1,21 @@
+[package]
+name = "wm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gist-rs = { path = "../gist-rs" }
+ratatui = "0.30"
+crossterm = "0.29"
+tui-tree-widget = "0.24"
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+dirs = "6"
+sha2 = "0.10"
+similar = "2"
+arboard = "3"
+chrono = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
+color-eyre = "0.6"
+reqwest = { workspace = true, features = ["json"] }
