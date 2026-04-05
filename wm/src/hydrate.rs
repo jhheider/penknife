@@ -20,16 +20,16 @@ pub struct HydrationProgress {
 
 #[derive(Debug, Clone)]
 pub struct AmbiguousMatch {
-    pub local_path: String,
-    pub candidates: Vec<GistCandidate>,
+    pub _local_path: String,
+    pub _candidates: Vec<GistCandidate>,
 }
 
 #[derive(Debug, Clone)]
 pub struct GistCandidate {
-    pub gist_id: String,
-    pub url: String,
-    pub description: Option<String>,
-    pub size: u64,
+    pub _gist_id: String,
+    pub _url: String,
+    pub _description: Option<String>,
+    pub _size: u64,
 }
 
 /// Run the full hydration algorithm. Calls `progress_cb` with updates.
@@ -284,14 +284,14 @@ pub async fn hydrate(
         } else {
             // Phase 5: Mark as ambiguous for manual resolution
             ambiguous.push(AmbiguousMatch {
-                local_path: file.rel_path.clone(),
-                candidates: size_matches
+                _local_path: file.rel_path.clone(),
+                _candidates: size_matches
                     .iter()
                     .map(|g| GistCandidate {
-                        gist_id: g.id.clone(),
-                        url: g.html_url.clone(),
-                        description: g.description.clone(),
-                        size: g.files.get(&filename).map(|f| f.size).unwrap_or(0),
+                        _gist_id: g.id.clone(),
+                        _url: g.html_url.clone(),
+                        _description: g.description.clone(),
+                        _size: g.files.get(&filename).map(|f| f.size).unwrap_or(0),
                     })
                     .collect(),
             });

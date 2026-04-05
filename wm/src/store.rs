@@ -60,7 +60,7 @@ impl Store {
         self.files.insert(rel_path, entry);
     }
 
-    pub fn remove(&mut self, rel_path: &str) -> Option<FileEntry> {
+    pub fn _remove(&mut self, rel_path: &str) -> Option<FileEntry> {
         self.files.remove(rel_path)
     }
 }
