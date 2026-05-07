@@ -22,9 +22,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(main_area);
 
     // Tree pane
+    let g = crate::glyphs::glyphs();
     let tree_block = Block::default()
         .borders(Borders::ALL)
-        .title("📄 Files")
+        .title(format!("{} Files", g.file_pane))
         .border_style(Style::default().fg(Color::DarkGray))
         .title_style(
             Style::default()

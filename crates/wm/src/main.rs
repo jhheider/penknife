@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod event;
 mod gdoc;
+mod glyphs;
 mod hydrate;
 mod scanner;
 mod store;

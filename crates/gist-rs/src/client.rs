@@ -10,6 +10,14 @@ use crate::types::*;
 const API_BASE: &str = "https://api.github.com";
 const MAX_RETRIES: u32 = 3;
 
+/// One page of gists plus pagination metadata.
+#[derive(Debug)]
+pub struct GistPage {
+    pub gists: Vec<Gist>,
+    /// Whether the response's Link header indicates more pages exist.
+    pub has_next: bool,
+}
+
 pub struct GistClient {
     http: Client,
     token: String,
@@ -70,11 +78,18 @@ impl GistClient {
         }
     }
 
-    /// List a single page of gists (100 per page). Returns empty vec when no more pages.
-    pub async fn list_page(&self, page: u32) -> Result<Vec<Gist>> {
+    /// List a single page of gists (100 per page) along with pagination metadata.
+    pub async fn list_page(&self, page: u32) -> Result<GistPage> {
         let url = format!("{API_BASE}/gists?per_page=100&page={page}");
         let resp = self.get_with_retry(&url).await?;
-        Ok(resp.json().await?)
+        let has_next = resp
+            .headers()
+            .get("link")
+            .and_then(|h| h.to_str().ok())
+            .map(link_header_has_next)
+            .unwrap_or(false);
+        let gists: Vec<Gist> = resp.json().await?;
+        Ok(GistPage { gists, has_next })
     }
 
     /// List all gists for the authenticated user, paginating automatically.
@@ -83,11 +98,11 @@ impl GistClient {
         let mut page = 1u32;
 
         loop {
-            let gists = self.list_page(page).await?;
-            if gists.is_empty() {
+            let result = self.list_page(page).await?;
+            all.extend(result.gists);
+            if !result.has_next {
                 break;
             }
-            all.extend(gists);
             page += 1;
         }
 
@@ -180,6 +195,13 @@ async fn check_response(resp: reqwest::Response) -> Result<Gist> {
 /// Compute exponential backoff delay for the given attempt number (1-based).
 fn backoff(attempt: u32) -> Duration {
     Duration::from_millis(500u64.saturating_mul(1u64 << attempt.min(6)))
+}
+
+/// Parse a GitHub `Link` header and return true if it contains a `rel="next"`.
+fn link_header_has_next(link_header: &str) -> bool {
+    link_header
+        .split(',')
+        .any(|part| part.contains("rel=\"next\""))
 }
 
 /// Inspect a response for rate-limit signals and return the duration to wait

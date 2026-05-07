@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -56,6 +57,7 @@ pub struct App {
     pub files: Vec<ScannedFile>,
     pub tree_items: Vec<tui_tree_widget::TreeItem<'static, String>>,
     pub tree_identifiers: Vec<String>,
+    pub tree_file_ids: HashSet<String>,
     pub tree_state: TreeState<String>,
     pub mode: Mode,
     pub preview_content: String,
@@ -97,6 +99,7 @@ impl App {
             files,
             tree_items: Vec::new(),
             tree_identifiers: Vec::new(),
+            tree_file_ids: HashSet::new(),
             tree_state: TreeState::default(),
             mode: start_mode,
             preview_content: String::new(),
@@ -124,14 +127,15 @@ impl App {
 
     pub fn rebuild_tree(&mut self) {
         let root = self.config.roots.get(self.active_root);
-        let (items, ids) = tree::build_tree(
+        let built = tree::build_tree(
             &self.files,
             &self.store,
             root.map(|r| r.as_path()),
             &self.search_filter,
         );
-        self.tree_items = items;
-        self.tree_identifiers = ids;
+        self.tree_items = built.items;
+        self.tree_identifiers = built.identifiers;
+        self.tree_file_ids = built.file_ids;
     }
 
     pub fn refresh_files(&mut self) -> Result<()> {
@@ -159,12 +163,12 @@ impl App {
     /// Get the currently selected file's rel_path (if it's a leaf file, not a directory).
     pub fn selected_file(&self) -> Option<String> {
         let selected = self.tree_state.selected();
-        if selected.is_empty() {
-            return None;
-        }
         let id = selected.last()?.clone();
-        // It's a file if it ends with .md
-        if id.ends_with(".md") { Some(id) } else { None }
+        if self.tree_file_ids.contains(&id) {
+            Some(id)
+        } else {
+            None
+        }
     }
 
     /// Get the absolute path for a rel_path.
@@ -212,7 +216,11 @@ impl App {
             let root_label = current_root
                 .map(|r| r.display().to_string())
                 .unwrap_or_else(|| "(no root)".into());
-            self.status_message = format!("{total} files | {tracked} tracked | 📂 {root_label}");
+            let g = crate::glyphs::glyphs();
+            self.status_message = format!(
+                "{total} files | {tracked} tracked | {} {root_label}",
+                g.root
+            );
         }
     }
 

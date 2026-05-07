@@ -25,12 +25,13 @@ pub enum SyncStatus {
 
 impl SyncStatus {
     pub fn icon(self) -> &'static str {
+        let g = crate::glyphs::glyphs();
         match self {
-            Self::Synced => "✅",
-            Self::LocalNewer => "⬆️",
-            Self::RemoteNewer => "⬇️",
-            Self::Conflict => "❗",
-            Self::NotGisted => "⚪",
+            Self::Synced => g.status_synced,
+            Self::LocalNewer => g.status_local_newer,
+            Self::RemoteNewer => g.status_remote_newer,
+            Self::Conflict => g.status_conflict,
+            Self::NotGisted => g.status_not_gisted,
         }
     }
 

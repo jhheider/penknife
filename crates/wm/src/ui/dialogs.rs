@@ -47,9 +47,10 @@ Keybindings:
 
 Press any key to close.";
 
+    let g = crate::glyphs::glyphs();
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("❓ Help")
+        .title(format!("{} Help", g.help))
         .border_style(Style::default().fg(Color::Cyan))
         .title_style(
             Style::default()
@@ -68,9 +69,10 @@ pub fn render_search(f: &mut Frame, area: Rect, editor: &LineEditor) {
     f.render_widget(Clear, modal);
 
     let text = format!("/{}", editor.content);
+    let g = crate::glyphs::glyphs();
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("🔍 Search")
+        .title(format!("{} Search", g.search))
         .border_style(Style::default().fg(Color::Yellow))
         .title_style(
             Style::default()
@@ -111,9 +113,10 @@ pub fn render_hydration_progress(f: &mut Frame, area: Rect, progress: &Hydration
     let modal = modal_area(area, 60, 25);
     f.render_widget(Clear, modal);
 
+    let g = crate::glyphs::glyphs();
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("🔄 Hydration")
+        .title(format!("{} Hydration", g.hydrating))
         .border_style(Style::default().fg(Color::Yellow))
         .title_style(
             Style::default()
@@ -162,9 +165,10 @@ pub fn render_confirm(f: &mut Frame, area: Rect, message: &str) {
     f.render_widget(Clear, modal);
 
     let text = format!("{message}\n\n[y] Yes  [n] No");
+    let g = crate::glyphs::glyphs();
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("⚠️  Confirm")
+        .title(format!("{}  Confirm", g.warn))
         .border_style(Style::default().fg(Color::Red))
         .title_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
     let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
@@ -176,9 +180,10 @@ pub fn render_message(f: &mut Frame, area: Rect, message: &str) {
     let modal = modal_area(area, 50, 10);
     f.render_widget(Clear, modal);
 
+    let g = crate::glyphs::glyphs();
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("💬 Info")
+        .title(format!("{} Info", g.info))
         .border_style(Style::default().fg(Color::Green))
         .title_style(
             Style::default()
@@ -196,9 +201,10 @@ pub fn render_root_switcher(f: &mut Frame, area: Rect, app: &App) {
     let modal = modal_area(area, 60, 50);
     f.render_widget(Clear, modal);
 
+    let g = crate::glyphs::glyphs();
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("📂 Root Directories")
+        .title(format!("{} Root Directories", g.root))
         .border_style(Style::default().fg(Color::Cyan))
         .title_style(
             Style::default()
@@ -259,7 +265,13 @@ pub fn render_resolve_ambiguous(
     f.render_widget(Clear, modal);
 
     let total = app.pending_ambiguous.len();
-    let title = format!("❓ Resolve ambiguous match ({} of {})", item + 1, total);
+    let g = crate::glyphs::glyphs();
+    let title = format!(
+        "{} Resolve ambiguous match ({} of {})",
+        g.question,
+        item + 1,
+        total
+    );
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -319,11 +331,12 @@ pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
     let modal = modal_area(area, 60, 20);
     f.render_widget(Clear, modal);
 
+    let g = crate::glyphs::glyphs();
     let is_setup = matches!(app.mode, crate::app::Mode::SetupRoot);
-    let title = if is_setup {
-        "👋 Welcome to Writings Manager"
+    let title: String = if is_setup {
+        format!("{} Welcome to Writings Manager", g.welcome)
     } else {
-        "📂 Add Root Directory"
+        format!("{} Add Root Directory", g.root)
     };
     let prompt = if is_setup {
         "Enter path to your writings folder:"

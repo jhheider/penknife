@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use ratatui::prelude::*;
@@ -8,14 +8,21 @@ use crate::scanner::ScannedFile;
 use crate::store::Store;
 use crate::sync::{self, SyncStatus};
 
+/// Result of building the tree: the widget items, the flat list of all
+/// identifiers (files + directories), and the subset that are file leaves.
+pub struct BuiltTree<'a> {
+    pub items: Vec<TreeItem<'a, String>>,
+    pub identifiers: Vec<String>,
+    pub file_ids: HashSet<String>,
+}
+
 /// Build a hierarchical tree of items from scanned files.
-/// Returns (tree_items, flat_identifiers) where identifiers map tree positions to rel_paths.
 pub fn build_tree<'a>(
     files: &[ScannedFile],
     store: &Store,
     root: Option<&Path>,
     filter: &str,
-) -> (Vec<TreeItem<'a, String>>, Vec<String>) {
+) -> BuiltTree<'a> {
     // Group files by directory hierarchy
     // e.g. "Game/rp-posts/file.md" → ["Game", "rp-posts", "file.md"]
     let mut tree: BTreeMap<String, BTreeMap<String, Vec<&ScannedFile>>> = BTreeMap::new();
@@ -59,6 +66,7 @@ pub fn build_tree<'a>(
 
     let mut items = Vec::new();
     let mut identifiers = Vec::new();
+    let mut file_ids: HashSet<String> = HashSet::new();
 
     for (game, subdirs) in &tree {
         if game.is_empty() {
@@ -68,6 +76,7 @@ pub fn build_tree<'a>(
                 let label = format_leaf(&file.rel_path, status);
                 let id = file.rel_path.clone();
                 identifiers.push(id.clone());
+                file_ids.insert(id.clone());
                 items.push(TreeItem::new_leaf(id, label));
             }
             continue;
@@ -84,6 +93,7 @@ pub fn build_tree<'a>(
                     let label = format_leaf(&file.rel_path, status);
                     let id = file.rel_path.clone();
                     identifiers.push(id.clone());
+                    file_ids.insert(id.clone());
                     game_children.push(TreeItem::new_leaf(id, label));
                 }
             } else {
@@ -94,6 +104,7 @@ pub fn build_tree<'a>(
                     let label = format_leaf(&file.rel_path, status);
                     let id = file.rel_path.clone();
                     identifiers.push(id.clone());
+                    file_ids.insert(id.clone());
                     sub_children.push(TreeItem::new_leaf(id, label));
                 }
                 identifiers.push(sub_id.clone());
@@ -110,7 +121,11 @@ pub fn build_tree<'a>(
         );
     }
 
-    (items, identifiers)
+    BuiltTree {
+        items,
+        identifiers,
+        file_ids,
+    }
 }
 
 fn file_status(file: &ScannedFile, store: &Store, root: Option<&Path>) -> SyncStatus {
@@ -136,8 +151,9 @@ fn format_leaf(rel_path: &str, status: SyncStatus) -> Line<'static> {
 }
 
 fn format_directory(name: &str) -> Line<'static> {
+    let g = crate::glyphs::glyphs();
     Line::from(vec![
-        Span::raw("📁 "),
+        Span::raw(format!("{} ", g.dir)),
         Span::styled(
             name.to_string(),
             Style::default()

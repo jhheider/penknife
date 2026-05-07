@@ -64,11 +64,11 @@ pub async fn hydrate(
     let mut all_gists: Vec<Gist> = Vec::new();
     let mut page = 1u32;
     loop {
-        let gists = client.list_page(page).await?;
-        if gists.is_empty() {
+        let result = client.list_page(page).await?;
+        all_gists.extend(result.gists);
+        if !result.has_next {
             break;
         }
-        all_gists.extend(gists);
         page += 1;
         progress_cb(HydrationProgress {
             phase: format!(

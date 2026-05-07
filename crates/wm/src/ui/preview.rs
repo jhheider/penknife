@@ -9,7 +9,7 @@ pub fn render_preview(f: &mut Frame, area: Rect, content: &str, title: &str) {
         .border_style(Style::default().fg(Color::DarkGray))
         .title_style(Style::default().fg(Color::Cyan));
 
-    let lines: Vec<Line> = content.lines().map(highlight_md_line).collect();
+    let lines = highlight(content);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -18,36 +18,154 @@ pub fn render_preview(f: &mut Frame, area: Rect, content: &str, title: &str) {
     f.render_widget(paragraph, area);
 }
 
-fn highlight_md_line(line: &str) -> Line<'static> {
-    let trimmed = line.trim_start();
+/// Highlight a full markdown document. Tracks code-block state across lines.
+fn highlight(content: &str) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    let mut in_code_block = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            // Toggle code block; render fence in green.
+            in_code_block = !in_code_block;
+            out.push(Line::styled(
+                line.to_string(),
+                Style::default().fg(Color::Green),
+            ));
+            continue;
+        }
+        if in_code_block {
+            out.push(Line::styled(
+                line.to_string(),
+                Style::default().fg(Color::Green),
+            ));
+            continue;
+        }
+        out.push(highlight_line(line, trimmed));
+    }
+    out
+}
+
+fn highlight_line(line: &str, trimmed: &str) -> Line<'static> {
     if trimmed.starts_with('#') {
-        Line::styled(
+        return Line::styled(
             line.to_string(),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-        )
-    } else if trimmed.starts_with('>') {
-        Line::styled(
+        );
+    }
+    if trimmed.starts_with('>') {
+        return Line::styled(
             line.to_string(),
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
-        )
-    } else if trimmed.starts_with("---") || trimmed.starts_with("***") || trimmed.starts_with("___")
+        );
+    }
+    if (trimmed.starts_with("---") || trimmed.starts_with("***") || trimmed.starts_with("___"))
+        && trimmed.chars().all(|c| matches!(c, '-' | '*' | '_'))
     {
-        Line::styled(
+        return Line::styled(
             line.to_string(),
             Style::default().add_modifier(Modifier::DIM),
-        )
-    } else if trimmed.starts_with("```") {
-        Line::styled(line.to_string(), Style::default().fg(Color::Green))
-    } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-        Line::from(vec![
-            Span::styled(trimmed[..2].to_string(), Style::default().fg(Color::Yellow)),
-            Span::raw(trimmed[2..].to_string()),
-        ])
-    } else {
-        Line::raw(line.to_string())
+        );
     }
+    // List marker
+    let (prefix_len, marker_color) = if let Some(rest) = trimmed.strip_prefix("- ") {
+        (line.len() - rest.len(), Some(Color::Yellow))
+    } else if let Some(rest) = trimmed.strip_prefix("* ") {
+        (line.len() - rest.len(), Some(Color::Yellow))
+    } else {
+        (0, None)
+    };
+
+    let leading_ws = &line[..line.len() - trimmed.len()];
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    if prefix_len > 0 {
+        spans.push(Span::raw(leading_ws.to_string()));
+        let marker = &line[leading_ws.len()..prefix_len];
+        spans.push(Span::styled(
+            marker.to_string(),
+            Style::default()
+                .fg(marker_color.unwrap_or(Color::Yellow))
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.extend(parse_inline(&line[prefix_len..]));
+    } else {
+        spans.extend(parse_inline(line));
+    }
+    Line::from(spans)
+}
+
+/// Tokenize inline markdown into styled spans. Handles `code`, **bold**, *italic*.
+/// Does not nest. Unclosed delimiters fall through as raw text.
+fn parse_inline(text: &str) -> Vec<Span<'static>> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut buf = String::new();
+    let flush = |buf: &mut String, spans: &mut Vec<Span<'static>>| {
+        if !buf.is_empty() {
+            spans.push(Span::raw(std::mem::take(buf)));
+        }
+    };
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        // Inline code: `...`
+        if c == '`'
+            && let Some(end) = chars[i + 1..].iter().position(|&c| c == '`')
+        {
+            flush(&mut buf, &mut spans);
+            let code: String = chars[i + 1..i + 1 + end].iter().collect();
+            spans.push(Span::styled(code, Style::default().fg(Color::Green)));
+            i += end + 2;
+            continue;
+        }
+        // Bold: **...**
+        if c == '*' && chars.get(i + 1) == Some(&'*') {
+            // Find closing **
+            let search_start = i + 2;
+            let mut j = search_start;
+            while j + 1 < chars.len() {
+                if chars[j] == '*' && chars[j + 1] == '*' {
+                    break;
+                }
+                j += 1;
+            }
+            if j + 1 < chars.len() && chars[j] == '*' && chars[j + 1] == '*' {
+                flush(&mut buf, &mut spans);
+                let inner: String = chars[search_start..j].iter().collect();
+                spans.push(Span::styled(
+                    inner,
+                    Style::default().add_modifier(Modifier::BOLD),
+                ));
+                i = j + 2;
+                continue;
+            }
+        }
+        // Italic: *...* (single asterisk, not part of **)
+        if c == '*' && chars.get(i + 1) != Some(&'*') {
+            // Find closing single *
+            let search_start = i + 1;
+            let mut j = search_start;
+            while j < chars.len() && chars[j] != '*' {
+                j += 1;
+            }
+            // Require non-empty content and closing *
+            if j < chars.len() && j > search_start {
+                flush(&mut buf, &mut spans);
+                let inner: String = chars[search_start..j].iter().collect();
+                spans.push(Span::styled(
+                    inner,
+                    Style::default().add_modifier(Modifier::ITALIC),
+                ));
+                i = j + 1;
+                continue;
+            }
+        }
+        buf.push(c);
+        i += 1;
+    }
+    flush(&mut buf, &mut spans);
+    spans
 }

@@ -64,6 +64,7 @@ impl Store {
 
         let cfg = Config::load().unwrap_or_default();
         let mut roots: BTreeMap<PathBuf, BTreeMap<String, FileEntry>> = BTreeMap::new();
+        let mut dropped = 0usize;
         for (rel, entry) in old_files {
             let owner = cfg
                 .roots
@@ -74,13 +75,23 @@ impl Store {
             if let Some(owner) = owner {
                 let owner = canonicalize_root(&owner);
                 roots.entry(owner).or_default().insert(rel, entry);
+            } else {
+                dropped += 1;
             }
-            // If no roots are configured at all, drop the orphans.
         }
-        Ok(Self {
+        if dropped > 0 {
+            eprintln!("warning: dropped {dropped} entries from v1 store with no configured roots");
+        }
+        let migrated = Self {
             version: CURRENT_VERSION,
             roots,
-        })
+        };
+        // Persist the migrated format so subsequent loads are cheap and the
+        // file no longer mentions v1.
+        if let Err(e) = migrated.save() {
+            eprintln!("warning: failed to persist migrated store: {e}");
+        }
+        Ok(migrated)
     }
 
     pub fn save(&self) -> Result<()> {

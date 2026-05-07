@@ -26,7 +26,10 @@ fn walk_dir(root: &Path, dir: &Path, out: &mut Vec<ScannedFile>) -> Result<()> {
     };
 
     for entry in entries {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue, // entry vanished between read_dir and now
+        };
         let path = entry.path();
         // Skip hidden entries
         if path
@@ -48,10 +51,12 @@ fn walk_dir(root: &Path, dir: &Path, out: &mut Vec<ScannedFile>) -> Result<()> {
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();
-            let modified = entry
-                .metadata()?
-                .modified()
-                .unwrap_or(SystemTime::UNIX_EPOCH);
+            // If metadata fails, skip the file rather than fabricating a UNIX_EPOCH
+            // mtime (which would surface as a stale-looking entry at the bottom).
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             out.push(ScannedFile {
                 rel_path: rel,
                 abs_path: path,
