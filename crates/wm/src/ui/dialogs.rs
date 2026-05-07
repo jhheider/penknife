@@ -246,6 +246,74 @@ pub fn render_root_switcher(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(para, modal);
 }
 
+/// Render the ambiguous-match resolver dialog. Shows the current item with
+/// the candidate gists and footer keybindings.
+pub fn render_resolve_ambiguous(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    item: usize,
+    selected: usize,
+) {
+    let modal = modal_area(area, 70, 60);
+    f.render_widget(Clear, modal);
+
+    let total = app.pending_ambiguous.len();
+    let title = format!("❓ Resolve ambiguous match ({} of {})", item + 1, total);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(am) = app.pending_ambiguous.get(item) {
+        lines.push(Line::styled(
+            format!("Local file: {}", am.local_path),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            "Candidate gists:",
+            Style::default().fg(Color::White),
+        ));
+        for (i, c) in am.candidates.iter().enumerate() {
+            let marker = if i == selected { " ▶ " } else { "   " };
+            let style = if i == selected {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            let desc = c.description.as_deref().unwrap_or("(no description)");
+            lines.push(Line::styled(
+                format!("{marker}{:.10}  {} bytes  {}", c.gist_id, c.size, desc),
+                style,
+            ));
+            lines.push(Line::styled(
+                format!("    {}", c.url),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "j/k=navigate  Enter=pick  s=skip  Esc=abort",
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let para = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    f.render_widget(para, modal);
+}
+
 /// Render setup/add root dialog.
 pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
     let modal = modal_area(area, 60, 20);
@@ -262,8 +330,13 @@ pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
     } else {
         "Enter path to add:"
     };
+    let hint = if is_setup {
+        "\n\n(Enter to confirm · Ctrl+Q to quit)"
+    } else {
+        "\n\n(Enter to confirm · Esc to cancel)"
+    };
 
-    let text = format!("{prompt}\n\n> {}", app.input_editor.content);
+    let text = format!("{prompt}\n\n> {}{hint}", app.input_editor.content);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)

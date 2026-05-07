@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use ratatui::prelude::*;
 use tui_tree_widget::TreeItem;
@@ -12,6 +13,7 @@ use crate::sync::{self, SyncStatus};
 pub fn build_tree<'a>(
     files: &[ScannedFile],
     store: &Store,
+    root: Option<&Path>,
     filter: &str,
 ) -> (Vec<TreeItem<'a, String>>, Vec<String>) {
     // Group files by directory hierarchy
@@ -62,7 +64,7 @@ pub fn build_tree<'a>(
         if game.is_empty() {
             // Root-level files
             for file in subdirs.values().flatten() {
-                let status = file_status(file, store);
+                let status = file_status(file, store, root);
                 let label = format_leaf(&file.rel_path, status);
                 let id = file.rel_path.clone();
                 identifiers.push(id.clone());
@@ -78,7 +80,7 @@ pub fn build_tree<'a>(
             if subdir.is_empty() {
                 // Files directly under game
                 for file in sub_files {
-                    let status = file_status(file, store);
+                    let status = file_status(file, store, root);
                     let label = format_leaf(&file.rel_path, status);
                     let id = file.rel_path.clone();
                     identifiers.push(id.clone());
@@ -88,7 +90,7 @@ pub fn build_tree<'a>(
                 let sub_id = format!("{game}/{subdir}");
                 let mut sub_children = Vec::new();
                 for file in sub_files {
-                    let status = file_status(file, store);
+                    let status = file_status(file, store, root);
                     let label = format_leaf(&file.rel_path, status);
                     let id = file.rel_path.clone();
                     identifiers.push(id.clone());
@@ -111,8 +113,8 @@ pub fn build_tree<'a>(
     (items, identifiers)
 }
 
-fn file_status(file: &ScannedFile, store: &Store) -> SyncStatus {
-    let entry = store.get(&file.rel_path);
+fn file_status(file: &ScannedFile, store: &Store, root: Option<&Path>) -> SyncStatus {
+    let entry = root.and_then(|r| store.get(r, &file.rel_path));
     if entry.is_none() {
         return SyncStatus::NotGisted;
     }

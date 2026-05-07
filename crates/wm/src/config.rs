@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     pub roots: Vec<PathBuf>,
 }

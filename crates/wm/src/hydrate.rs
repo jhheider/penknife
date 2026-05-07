@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use chrono::Utc;
 use gist_rs::{Gist, GistClient};
@@ -20,25 +21,34 @@ pub struct HydrationProgress {
 
 #[derive(Debug, Clone)]
 pub struct AmbiguousMatch {
-    pub _local_path: String,
-    pub _candidates: Vec<GistCandidate>,
+    pub local_path: String,
+    pub local_hash: String,
+    pub candidates: Vec<GistCandidate>,
 }
 
 #[derive(Debug, Clone)]
 pub struct GistCandidate {
-    pub _gist_id: String,
-    pub _url: String,
-    pub _description: Option<String>,
-    pub _size: u64,
+    pub gist_id: String,
+    pub url: String,
+    pub description: Option<String>,
+    pub size: u64,
+}
+
+pub struct HydrationOutcome {
+    pub matched: usize,
+    pub ambiguous: Vec<AmbiguousMatch>,
 }
 
 /// Run the full hydration algorithm. Calls `progress_cb` with updates.
+/// Mutations are scoped to `root` in the store. The caller is responsible
+/// for persisting `store` after merging results.
 pub async fn hydrate(
     client: &GistClient,
     store: &mut Store,
+    root: &Path,
     files: &[ScannedFile],
     mut progress_cb: impl FnMut(HydrationProgress),
-) -> Result<usize> {
+) -> Result<HydrationOutcome> {
     let total_files = files.len();
 
     // Phase 1: Fetch all gists page by page
@@ -111,7 +121,7 @@ pub async fn hydrate(
     // Phase 3: Unique matches
     for (i, file) in files.iter().enumerate() {
         // Skip already-mapped files
-        if store.get(&file.rel_path).is_some() {
+        if store.get(root, &file.rel_path).is_some() {
             matched += 1;
             // Send progress every 10 files
             if i % 10 == 0 {
@@ -156,8 +166,16 @@ pub async fn hydrate(
         if gists.len() == 1 && locals == 1 {
             // Unique match
             let gist = gists[0];
-            let hash = sha256_hex(&std::fs::read_to_string(&file.abs_path).unwrap_or_default());
+            let local_content = match std::fs::read_to_string(&file.abs_path) {
+                Ok(c) => c,
+                Err(_) => {
+                    // File disappeared or unreadable — skip rather than fabricate empty match.
+                    continue;
+                }
+            };
+            let hash = sha256_hex(&local_content);
             store.insert(
+                root,
                 file.rel_path.clone(),
                 FileEntry {
                     gist_id: gist.id.clone(),
@@ -193,7 +211,7 @@ pub async fn hydrate(
 
     // Phase 4: Disambiguate by content (SHA-256 compare)
     for (i, file) in files.iter().enumerate() {
-        if store.get(&file.rel_path).is_some() {
+        if store.get(root, &file.rel_path).is_some() {
             continue;
         }
 
@@ -221,7 +239,10 @@ pub async fn hydrate(
             ambiguous: ambiguous.clone(),
         });
 
-        let local_content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
+        let local_content = match std::fs::read_to_string(&file.abs_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
         let local_hash = sha256_hex(&local_content);
         let local_size = local_content.len() as u64;
 
@@ -239,6 +260,7 @@ pub async fn hydrate(
         if size_matches.len() == 1 {
             let gist = size_matches[0];
             store.insert(
+                root,
                 file.rel_path.clone(),
                 FileEntry {
                     gist_id: gist.id.clone(),
@@ -271,6 +293,7 @@ pub async fn hydrate(
 
         if let Some(gist) = content_match {
             store.insert(
+                root,
                 file.rel_path.clone(),
                 FileEntry {
                     gist_id: gist.id.clone(),
@@ -284,14 +307,15 @@ pub async fn hydrate(
         } else {
             // Phase 5: Mark as ambiguous for manual resolution
             ambiguous.push(AmbiguousMatch {
-                _local_path: file.rel_path.clone(),
-                _candidates: size_matches
+                local_path: file.rel_path.clone(),
+                local_hash: local_hash.clone(),
+                candidates: size_matches
                     .iter()
                     .map(|g| GistCandidate {
-                        _gist_id: g.id.clone(),
-                        _url: g.html_url.clone(),
-                        _description: g.description.clone(),
-                        _size: g.files.get(&filename).map(|f| f.size).unwrap_or(0),
+                        gist_id: g.id.clone(),
+                        url: g.html_url.clone(),
+                        description: g.description.clone(),
+                        size: g.files.get(&filename).map(|f| f.size).unwrap_or(0),
                     })
                     .collect(),
             });
@@ -307,9 +331,8 @@ pub async fn hydrate(
         total_gists,
         total_files,
         current_file: total_files,
-        ambiguous,
+        ambiguous: ambiguous.clone(),
     });
 
-    store.save()?;
-    Ok(matched)
+    Ok(HydrationOutcome { matched, ambiguous })
 }

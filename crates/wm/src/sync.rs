@@ -5,7 +5,7 @@ use gist_rs::GistClient;
 use ratatui::style::Color;
 
 use crate::error::Result;
-use crate::store::{FileEntry, Store};
+use crate::store::FileEntry;
 
 /// SHA-256 hash of content as hex string.
 pub fn sha256_hex(content: &str) -> String {
@@ -95,7 +95,7 @@ pub async fn full_status(
 /// Push local content to gist (create or update). Returns updated FileEntry.
 pub async fn push(
     client: &GistClient,
-    store: &Store,
+    existing: Option<&FileEntry>,
     rel_path: &str,
     filename: &str,
     content: &str,
@@ -103,7 +103,7 @@ pub async fn push(
     let hash = sha256_hex(content);
     let now = Utc::now();
 
-    let gist = if let Some(entry) = store.get(rel_path) {
+    let gist = if let Some(entry) = existing {
         client.update(&entry.gist_id, filename, content).await?
     } else {
         client.create(filename, content, rel_path).await?

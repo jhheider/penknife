@@ -95,6 +95,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Mode::SetupRoot | Mode::AddRoot => {
             dialogs::render_setup_root(f, f.area(), app);
         }
+        Mode::ResolveAmbiguous { item, selected } => {
+            dialogs::render_resolve_ambiguous(f, f.area(), app, *item, *selected);
+        }
         _ => {}
     }
 }

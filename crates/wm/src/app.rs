@@ -7,9 +7,9 @@ use tui_tree_widget::TreeState;
 use crate::config::Config;
 use crate::error::Result;
 use crate::event::{AsyncEvent, AsyncSender};
-use crate::hydrate::HydrationProgress;
+use crate::hydrate::{AmbiguousMatch, HydrationProgress};
 use crate::scanner::{self, ScannedFile};
-use crate::store::Store;
+use crate::store::{FileEntry, Store};
 use crate::sync;
 use crate::ui::input::LineEditor;
 use crate::ui::tree;
@@ -39,6 +39,10 @@ pub enum Mode {
     },
     AddRoot,
     SetupRoot,
+    ResolveAmbiguous {
+        item: usize,
+        selected: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -65,6 +69,7 @@ pub struct App {
     pub async_tx: AsyncSender,
     pub token: Option<String>,
     pub active_root: usize,
+    pub pending_ambiguous: Vec<AmbiguousMatch>,
 }
 
 impl App {
@@ -105,6 +110,7 @@ impl App {
             async_tx,
             token,
             active_root: 0,
+            pending_ambiguous: Vec::new(),
         };
         app.rebuild_tree();
         app.update_status();
@@ -117,7 +123,13 @@ impl App {
     }
 
     pub fn rebuild_tree(&mut self) {
-        let (items, ids) = tree::build_tree(&self.files, &self.store, &self.search_filter);
+        let root = self.config.roots.get(self.active_root);
+        let (items, ids) = tree::build_tree(
+            &self.files,
+            &self.store,
+            root.map(|r| r.as_path()),
+            &self.search_filter,
+        );
         self.tree_items = items;
         self.tree_identifiers = ids;
     }
@@ -137,7 +149,9 @@ impl App {
     fn switch_root(&mut self, index: usize) {
         if index < self.config.roots.len() {
             self.active_root = index;
-            let _ = self.refresh_files();
+            if let Err(e) = self.refresh_files() {
+                self.status_message = format!("Refresh error: {e}");
+            }
             self.update_status();
         }
     }
@@ -172,23 +186,30 @@ impl App {
     }
 
     pub fn update_status(&mut self) {
+        let current_root = self.current_root().cloned();
         if let Some(ref rel) = self.selected_file() {
-            let entry = self.store.get(rel);
+            let entry = current_root
+                .as_ref()
+                .and_then(|r| self.store.get(r, rel))
+                .cloned();
             let status = if entry.is_some() {
                 let content = std::fs::read_to_string(self.abs_path(rel)).unwrap_or_default();
-                sync::local_status(&content, entry)
+                sync::local_status(&content, entry.as_ref())
             } else {
                 sync::SyncStatus::NotGisted
             };
             self.status_color = status.color();
-            let url = entry.map(|e| e.url.as_str()).unwrap_or("no gist");
+            let url = entry.as_ref().map(|e| e.url.as_str()).unwrap_or("no gist");
             self.status_message = format!("{} {} | {url}", status.icon(), rel);
         } else {
             self.status_color = Color::White;
             let total = self.files.len();
-            let tracked = self.store.files.len();
-            let root_label = self
-                .current_root()
+            let tracked = current_root
+                .as_ref()
+                .and_then(|r| self.store.files_for_root(r))
+                .map(|m| m.len())
+                .unwrap_or(0);
+            let root_label = current_root
                 .map(|r| r.display().to_string())
                 .unwrap_or_else(|| "(no root)".into());
             self.status_message = format!("{total} files | {tracked} tracked | 📂 {root_label}");
@@ -275,15 +296,86 @@ impl App {
             }
             Mode::Hydrating { done, .. } => {
                 if *done {
-                    self.mode = Mode::Normal;
-                    let _ = self.refresh_files();
+                    if let Err(e) = self.refresh_files() {
+                        self.status_message = format!("Refresh error: {e}");
+                    }
                     self.update_status();
+                    if !self.pending_ambiguous.is_empty() {
+                        self.mode = Mode::ResolveAmbiguous {
+                            item: 0,
+                            selected: 0,
+                        };
+                    } else {
+                        self.mode = Mode::Normal;
+                    }
                 }
                 return;
             }
             Mode::Diff { .. } => {
                 // Any key exits diff
                 self.mode = Mode::Normal;
+                return;
+            }
+            Mode::ResolveAmbiguous { item, selected } => {
+                let item = *item;
+                let selected = *selected;
+                let total_items = self.pending_ambiguous.len();
+                let candidates = self
+                    .pending_ambiguous
+                    .get(item)
+                    .map(|m| m.candidates.len())
+                    .unwrap_or(0);
+                match key.code {
+                    KeyCode::Esc => {
+                        self.pending_ambiguous.clear();
+                        self.mode = Mode::Normal;
+                    }
+                    KeyCode::Char('j') | KeyCode::Down if candidates > 0 => {
+                        let new_sel = (selected + 1).min(candidates - 1);
+                        self.mode = Mode::ResolveAmbiguous {
+                            item,
+                            selected: new_sel,
+                        };
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        let new_sel = selected.saturating_sub(1);
+                        self.mode = Mode::ResolveAmbiguous {
+                            item,
+                            selected: new_sel,
+                        };
+                    }
+                    KeyCode::Char('s') => {
+                        // Skip this one
+                        let next = item + 1;
+                        if next < total_items {
+                            self.mode = Mode::ResolveAmbiguous {
+                                item: next,
+                                selected: 0,
+                            };
+                        } else {
+                            self.pending_ambiguous.clear();
+                            self.mode = Mode::Normal;
+                            self.status_message = "Ambiguous resolution complete.".into();
+                        }
+                    }
+                    KeyCode::Enter if candidates > 0 => {
+                        self.apply_ambiguous_pick(item, selected);
+                        let next = item + 1;
+                        if next < total_items {
+                            self.mode = Mode::ResolveAmbiguous {
+                                item: next,
+                                selected: 0,
+                            };
+                        } else {
+                            self.pending_ambiguous.clear();
+                            self.mode = Mode::Normal;
+                            self.rebuild_tree();
+                            self.update_status();
+                            self.status_message = "Ambiguous resolution complete.".into();
+                        }
+                    }
+                    _ => {}
+                }
                 return;
             }
             Mode::RootSwitcher { selected } => {
@@ -312,7 +404,10 @@ impl App {
                         self.mode = Mode::AddRoot;
                     }
                     KeyCode::Char('d') if sel < self.config.roots.len() => {
-                        let _ = self.config.remove_root(sel);
+                        if let Err(e) = self.config.remove_root(sel) {
+                            self.status_message = format!("Remove root failed: {e}");
+                            return;
+                        }
                         if self.config.roots.is_empty() {
                             self.active_root = 0;
                             self.files.clear();
@@ -325,7 +420,9 @@ impl App {
                             }
                             let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
                             self.mode = Mode::RootSwitcher { selected: new_sel };
-                            let _ = self.refresh_files();
+                            if let Err(e) = self.refresh_files() {
+                                self.status_message = format!("Refresh error: {e}");
+                            }
                             self.update_status();
                         }
                     }
@@ -364,9 +461,14 @@ impl App {
                                 Mode::Message(format!("Not a directory: {}", expanded.display()));
                             return;
                         }
-                        let _ = self.config.add_root(expanded);
+                        if let Err(e) = self.config.add_root(expanded) {
+                            self.mode = Mode::Message(format!("Add root failed: {e}"));
+                            return;
+                        }
                         self.active_root = self.config.roots.len() - 1;
-                        let _ = self.refresh_files();
+                        if let Err(e) = self.refresh_files() {
+                            self.status_message = format!("Refresh error: {e}");
+                        }
                         self.update_status();
                         self.mode = Mode::Normal;
                     }
@@ -417,7 +519,11 @@ impl App {
             KeyCode::Char('u') => self.do_sync_up(),
             KeyCode::Char('d') => {
                 if let Some(ref rel) = self.selected_file() {
-                    if self.store.get(rel).is_some() {
+                    let has_entry = self
+                        .current_root()
+                        .map(|r| self.store.get(r, rel).is_some())
+                        .unwrap_or(false);
+                    if has_entry {
                         self.mode = Mode::Confirm {
                             message: format!(
                                 "Pull remote content for {rel}? Local changes will be overwritten."
@@ -458,11 +564,18 @@ impl App {
 
     pub fn handle_async_event(&mut self, event: AsyncEvent) {
         match event {
-            AsyncEvent::PushDone { rel_path, result } => match result {
+            AsyncEvent::PushDone {
+                root,
+                rel_path,
+                result,
+            } => match result {
                 Ok(entry) => {
                     let url = entry.url.clone();
-                    self.store.insert(rel_path.clone(), entry);
-                    let _ = self.store.save();
+                    self.store.insert(&root, rel_path.clone(), entry);
+                    if let Err(e) = self.store.save() {
+                        self.status_message = format!("Push ok but store save failed: {e}");
+                        return;
+                    }
                     self.status_message = format!("Pushed {rel_path} → {url}");
                     self.rebuild_tree();
                 }
@@ -470,15 +583,22 @@ impl App {
                     self.status_message = format!("Push failed: {e}");
                 }
             },
-            AsyncEvent::PullDone { rel_path, result } => match result {
+            AsyncEvent::PullDone {
+                root,
+                rel_path,
+                result,
+            } => match result {
                 Ok((content, entry)) => {
-                    let path = self.abs_path(&rel_path);
+                    let path = root.join(&rel_path);
                     if let Err(e) = std::fs::write(&path, &content) {
                         self.status_message = format!("Write failed: {e}");
                         return;
                     }
-                    self.store.insert(rel_path.clone(), entry);
-                    let _ = self.store.save();
+                    self.store.insert(&root, rel_path.clone(), entry);
+                    if let Err(e) = self.store.save() {
+                        self.status_message = format!("Pull ok but store save failed: {e}");
+                        return;
+                    }
                     self.status_message = format!("Pulled {rel_path}");
                     self.update_preview();
                     self.rebuild_tree();
@@ -493,29 +613,38 @@ impl App {
                     done: false,
                 };
             }
-            AsyncEvent::HydrationDone(result) => {
-                match result {
-                    Ok(count) => {
-                        // Reload store from disk — hydration ran on a cloned store
-                        if let Ok(reloaded) = Store::load() {
-                            self.store = reloaded;
-                        }
-                        if let Mode::Hydrating { progress, done } = &mut self.mode {
-                            if let Some(p) = progress {
-                                p.phase =
-                                    format!("Complete! Matched {count} files. Press any key.");
-                            }
-                            *done = true;
-                        }
+            AsyncEvent::HydrationDone(result) => match result {
+                Ok(data) => {
+                    // Merge hydration's discovered mappings into the live store
+                    // rather than reloading from disk (which would clobber any
+                    // concurrent push/pull that completed during hydration).
+                    self.store.merge_from(&data.store);
+                    if let Err(e) = self.store.save() {
+                        self.status_message = format!("Hydration ok but save failed: {e}");
                     }
-                    Err(e) => {
-                        self.mode = Mode::Message(format!("Hydration error: {e}"));
+                    let matched = data.matched;
+                    let ambiguous_count = data.ambiguous.len();
+                    if let Mode::Hydrating { progress, done } = &mut self.mode {
+                        if let Some(p) = progress {
+                            p.phase = format!(
+                                "Complete! Matched {matched} files, {ambiguous_count} ambiguous. Press any key."
+                            );
+                        }
+                        *done = true;
                     }
+                    // Stash ambiguous matches for the resolver UI (added later).
+                    self.pending_ambiguous = data.ambiguous;
                 }
-            }
+                Err(e) => {
+                    self.mode = Mode::Message(format!("Hydration error: {e}"));
+                }
+            },
             AsyncEvent::StatusCheck { rel_path, result } => match result {
-                Ok((status, _remote_content)) => {
+                Ok((status, remote_content)) => {
                     self.status_message = format!("{} {rel_path}", status.icon());
+                    if let Mode::Diff { remote, .. } = &mut self.mode {
+                        *remote = remote_content;
+                    }
                 }
                 Err(e) => {
                     self.status_message = format!("Status check failed: {e}");
@@ -542,6 +671,10 @@ impl App {
         let Some(rel) = self.selected_file() else {
             return;
         };
+        let Some(root) = self.current_root().cloned() else {
+            self.status_message = "No active root.".into();
+            return;
+        };
         let path = self.abs_path(&rel);
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
@@ -555,24 +688,25 @@ impl App {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        let store_snapshot = self.store.get(&rel).cloned();
+        let store_snapshot = self.store.get(&root, &rel).cloned();
         let tx = self.async_tx.clone();
         let rel_clone = rel.clone();
+        let root_clone = root.clone();
 
         self.status_message = format!("Pushing {rel}...");
 
-        // Build a mini store for the push function
         tokio::spawn(async move {
             let client = gist_rs::GistClient::new(token);
-            let mut temp_store = Store {
-                version: 1,
-                files: std::collections::BTreeMap::new(),
-            };
-            if let Some(entry) = store_snapshot {
-                temp_store.insert(rel_clone.clone(), entry);
-            }
-            let result = sync::push(&client, &temp_store, &rel_clone, &filename, &content).await;
+            let result = sync::push(
+                &client,
+                store_snapshot.as_ref(),
+                &rel_clone,
+                &filename,
+                &content,
+            )
+            .await;
             let _ = tx.send(AsyncEvent::PushDone {
+                root: root_clone,
                 rel_path: rel_clone,
                 result: result.map_err(|e| e.to_string()),
             });
@@ -587,7 +721,11 @@ impl App {
         let Some(rel) = self.selected_file() else {
             return;
         };
-        let Some(entry) = self.store.get(&rel).cloned() else {
+        let Some(root) = self.current_root().cloned() else {
+            self.status_message = "No active root.".into();
+            return;
+        };
+        let Some(entry) = self.store.get(&root, &rel).cloned() else {
             self.status_message = "No gist mapped for this file.".into();
             return;
         };
@@ -599,6 +737,7 @@ impl App {
             .to_string();
         let tx = self.async_tx.clone();
         let rel_clone = rel.clone();
+        let root_clone = root.clone();
 
         self.status_message = format!("Pulling {rel}...");
 
@@ -606,6 +745,7 @@ impl App {
             let client = gist_rs::GistClient::new(token);
             let result = sync::pull(&client, &entry, &filename).await;
             let _ = tx.send(AsyncEvent::PullDone {
+                root: root_clone,
                 rel_path: rel_clone,
                 result: result.map_err(|e| e.to_string()),
             });
@@ -616,7 +756,11 @@ impl App {
         let Some(rel) = self.selected_file() else {
             return;
         };
-        if let Some(entry) = self.store.get(&rel) {
+        let entry = self
+            .current_root()
+            .and_then(|r| self.store.get(r, &rel))
+            .cloned();
+        if let Some(entry) = entry {
             match arboard::Clipboard::new() {
                 Ok(mut clip) => {
                     let url = entry.url.clone();
@@ -645,7 +789,11 @@ impl App {
         let Some(rel) = self.selected_file() else {
             return;
         };
-        let Some(entry) = self.store.get(&rel).cloned() else {
+        let Some(root) = self.current_root().cloned() else {
+            self.status_message = "No active root.".into();
+            return;
+        };
+        let Some(entry) = self.store.get(&root, &rel).cloned() else {
             self.status_message = "No gist to diff against.".into();
             return;
         };
@@ -683,6 +831,10 @@ impl App {
             self.status_message = "No GitHub token available.".into();
             return;
         };
+        let Some(root) = self.current_root().cloned() else {
+            self.status_message = "No active root.".into();
+            return;
+        };
 
         self.mode = Mode::Hydrating {
             progress: None,
@@ -690,20 +842,59 @@ impl App {
         };
         let tx = self.async_tx.clone();
         let files = self.files.clone();
-        let mut store = Store {
-            version: self.store.version,
-            files: self.store.files.clone(),
-        };
+        // Snapshot only this root's mappings; we'll merge results back when done.
+        let mut store = Store::default();
+        if let Some(map) = self.store.files_for_root(&root) {
+            for (rel, entry) in map {
+                store.insert(&root, rel.clone(), entry.clone());
+            }
+        }
 
         tokio::spawn(async move {
             let client = gist_rs::GistClient::new(token);
             let tx2 = tx.clone();
-            let result = crate::hydrate::hydrate(&client, &mut store, &files, move |progress| {
-                let _ = tx2.send(AsyncEvent::HydrationUpdate(progress));
-            })
-            .await;
-            let _ = tx.send(AsyncEvent::HydrationDone(result.map_err(|e| e.to_string())));
+            let result =
+                crate::hydrate::hydrate(&client, &mut store, &root, &files, move |progress| {
+                    let _ = tx2.send(AsyncEvent::HydrationUpdate(progress));
+                })
+                .await;
+            let payload = result.map(|outcome| crate::event::HydrationDoneData {
+                matched: outcome.matched,
+                ambiguous: outcome.ambiguous,
+                store: Box::new(store),
+            });
+            let _ = tx.send(AsyncEvent::HydrationDone(
+                payload.map_err(|e| e.to_string()),
+            ));
         });
+    }
+
+    /// Apply a user pick from the ambiguous resolver: write the chosen gist mapping
+    /// into the store for the current root.
+    fn apply_ambiguous_pick(&mut self, item: usize, candidate: usize) {
+        let Some(root) = self.current_root().cloned() else {
+            return;
+        };
+        let Some(am) = self.pending_ambiguous.get(item) else {
+            return;
+        };
+        let Some(cand) = am.candidates.get(candidate) else {
+            return;
+        };
+        let entry = FileEntry {
+            gist_id: cand.gist_id.clone(),
+            url: cand.url.clone(),
+            local_sha256: am.local_hash.clone(),
+            remote_sha256: am.local_hash.clone(),
+            last_synced: chrono::Utc::now(),
+        };
+        let rel = am.local_path.clone();
+        self.store.insert(&root, rel.clone(), entry);
+        if let Err(e) = self.store.save() {
+            self.status_message = format!("Pick saved in memory but disk save failed: {e}");
+        } else {
+            self.status_message = format!("Mapped {rel} → {}", cand.url);
+        }
     }
 
     fn start_gdoc_fetch(&mut self, url: &str) {
@@ -767,6 +958,8 @@ impl App {
 
         self.mode = Mode::Normal;
         self.status_message = format!("Saved: {}", path.display());
-        let _ = self.refresh_files();
+        if let Err(e) = self.refresh_files() {
+            self.status_message = format!("Saved but refresh failed: {e}");
+        }
     }
 }
