@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Color;
+use tokio::task::JoinHandle;
 use tui_tree_widget::TreeState;
 
 use crate::config::Config;
@@ -72,6 +73,8 @@ pub struct App {
     pub token: Option<String>,
     pub active_root: usize,
     pub pending_ambiguous: Vec<AmbiguousMatch>,
+    /// Outstanding spawned tokio tasks; aborted on quit.
+    pub tasks: Vec<JoinHandle<()>>,
 }
 
 impl App {
@@ -114,6 +117,7 @@ impl App {
             token,
             active_root: 0,
             pending_ambiguous: Vec::new(),
+            tasks: Vec::new(),
         };
         app.rebuild_tree();
         app.update_status();
@@ -123,6 +127,24 @@ impl App {
     /// Get the current root directory, if any.
     fn current_root(&self) -> Option<&PathBuf> {
         self.config.roots.get(self.active_root)
+    }
+
+    /// Spawn a tokio task and track its JoinHandle so it can be aborted on quit.
+    /// Also opportunistically drops any handles that have already finished.
+    fn spawn_tracked<F>(&mut self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.tasks.retain(|h| !h.is_finished());
+        self.tasks.push(tokio::spawn(fut));
+    }
+
+    /// Abort any in-flight tasks. Called from main on shutdown so we don't
+    /// keep work going after the UI is gone.
+    pub fn abort_tasks(&mut self) {
+        for h in self.tasks.drain(..) {
+            h.abort();
+        }
     }
 
     pub fn rebuild_tree(&mut self) {
@@ -226,276 +248,258 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         match &self.mode {
-            Mode::Help => {
+            Mode::Help | Mode::Message(_) => {
                 self.mode = Mode::Normal;
-                return;
             }
-            Mode::Message(_) => {
+            Mode::Search => self.handle_search_key(key),
+            Mode::GdocUrl => self.handle_gdoc_url_key(key),
+            Mode::GdocFilename => self.handle_gdoc_filename_key(key),
+            Mode::Confirm { .. } => self.handle_confirm_key(key),
+            Mode::Hydrating { .. } => self.handle_hydrating_key(),
+            Mode::Diff { .. } => {
+                // Any key exits diff.
                 self.mode = Mode::Normal;
-                return;
             }
-            Mode::Search => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.mode = Mode::Normal;
-                        self.search_filter.clear();
-                        self.rebuild_tree();
-                    }
-                    KeyCode::Enter => {
-                        self.search_filter = self.search_editor.content.clone();
-                        self.mode = Mode::Normal;
-                        self.rebuild_tree();
-                    }
-                    _ => {
-                        self.search_editor.handle_key(key);
-                        // Live filter as you type
-                        self.search_filter = self.search_editor.content.clone();
-                        self.rebuild_tree();
-                    }
-                }
-                return;
+            Mode::ResolveAmbiguous { .. } => self.handle_resolve_ambiguous_key(key),
+            Mode::RootSwitcher { .. } => self.handle_root_switcher_key(key),
+            Mode::SetupRoot | Mode::AddRoot => self.handle_setup_or_add_root_key(key),
+            Mode::Normal => self.handle_normal_key(key),
+        }
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.search_filter.clear();
+                self.rebuild_tree();
             }
-            Mode::GdocUrl => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.mode = Mode::Normal;
-                    }
-                    KeyCode::Enter => {
-                        let url = self.input_editor.content.clone();
-                        self.start_gdoc_fetch(&url);
-                    }
-                    _ => {
-                        self.input_editor.handle_key(key);
-                    }
-                }
-                return;
+            KeyCode::Enter => {
+                self.search_filter = self.search_editor.content.clone();
+                self.mode = Mode::Normal;
+                self.rebuild_tree();
             }
-            Mode::GdocFilename => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.mode = Mode::Normal;
-                        self.gdoc_content = None;
-                    }
-                    KeyCode::Enter => {
-                        self.save_gdoc_import();
-                    }
-                    _ => {
-                        self.input_editor.handle_key(key);
-                    }
-                }
-                return;
+            _ => {
+                self.search_editor.handle_key(key);
+                self.search_filter = self.search_editor.content.clone();
+                self.rebuild_tree();
             }
-            Mode::Confirm { action, .. } => {
-                let action_copy = match action {
-                    ConfirmAction::SyncDown => ConfirmAction::SyncDown,
+        }
+    }
+
+    fn handle_gdoc_url_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => {
+                let url = self.input_editor.content.clone();
+                self.start_gdoc_fetch(&url);
+            }
+            _ => {
+                self.input_editor.handle_key(key);
+            }
+        }
+    }
+
+    fn handle_gdoc_filename_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.gdoc_content = None;
+            }
+            KeyCode::Enter => self.save_gdoc_import(),
+            _ => {
+                self.input_editor.handle_key(key);
+            }
+        }
+    }
+
+    fn handle_confirm_key(&mut self, key: KeyEvent) {
+        let Mode::Confirm { action, .. } = &self.mode else {
+            return;
+        };
+        // Snapshot the action so we can transition out of Confirm before invoking.
+        let action_copy = match action {
+            ConfirmAction::SyncDown => ConfirmAction::SyncDown,
+        };
+        if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+            match action_copy {
+                ConfirmAction::SyncDown => self.do_sync_down(),
+            }
+        }
+        self.mode = Mode::Normal;
+    }
+
+    fn handle_hydrating_key(&mut self) {
+        let Mode::Hydrating { done, .. } = &self.mode else {
+            return;
+        };
+        if !*done {
+            return;
+        }
+        if let Err(e) = self.refresh_files() {
+            self.status_message = format!("Refresh error: {e}");
+        }
+        self.update_status();
+        if !self.pending_ambiguous.is_empty() {
+            self.mode = Mode::ResolveAmbiguous {
+                item: 0,
+                selected: 0,
+            };
+        } else {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    fn handle_resolve_ambiguous_key(&mut self, key: KeyEvent) {
+        let Mode::ResolveAmbiguous { item, selected } = &self.mode else {
+            return;
+        };
+        let item = *item;
+        let selected = *selected;
+        let total_items = self.pending_ambiguous.len();
+        let candidates = self
+            .pending_ambiguous
+            .get(item)
+            .map(|m| m.candidates.len())
+            .unwrap_or(0);
+        let advance = |this: &mut Self| {
+            let next = item + 1;
+            if next < total_items {
+                this.mode = Mode::ResolveAmbiguous {
+                    item: next,
+                    selected: 0,
                 };
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        match action_copy {
-                            ConfirmAction::SyncDown => self.do_sync_down(),
-                        }
-                        self.mode = Mode::Normal;
-                    }
-                    _ => {
-                        self.mode = Mode::Normal;
-                    }
-                }
-                return;
+            } else {
+                this.pending_ambiguous.clear();
+                this.mode = Mode::Normal;
+                this.rebuild_tree();
+                this.update_status();
+                this.status_message = "Ambiguous resolution complete.".into();
             }
-            Mode::Hydrating { done, .. } => {
-                if *done {
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.pending_ambiguous.clear();
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Char('j') | KeyCode::Down if candidates > 0 => {
+                self.mode = Mode::ResolveAmbiguous {
+                    item,
+                    selected: (selected + 1).min(candidates - 1),
+                };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.mode = Mode::ResolveAmbiguous {
+                    item,
+                    selected: selected.saturating_sub(1),
+                };
+            }
+            KeyCode::Char('s') => advance(self),
+            KeyCode::Enter if candidates > 0 => {
+                self.apply_ambiguous_pick(item, selected);
+                advance(self);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_root_switcher_key(&mut self, key: KeyEvent) {
+        let Mode::RootSwitcher { selected } = &self.mode else {
+            return;
+        };
+        let sel = *selected;
+        match key.code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Char('j') | KeyCode::Down => {
+                let max = self.config.roots.len().saturating_sub(1);
+                self.mode = Mode::RootSwitcher {
+                    selected: (sel + 1).min(max),
+                };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.mode = Mode::RootSwitcher {
+                    selected: sel.saturating_sub(1),
+                };
+            }
+            KeyCode::Enter => {
+                self.mode = Mode::Normal;
+                self.switch_root(sel);
+            }
+            KeyCode::Char('a') => {
+                self.input_editor = LineEditor::new();
+                self.mode = Mode::AddRoot;
+            }
+            KeyCode::Char('d') if sel < self.config.roots.len() => {
+                if let Err(e) = self.config.remove_root(sel) {
+                    self.status_message = format!("Remove root failed: {e}");
+                    return;
+                }
+                if self.config.roots.is_empty() {
+                    self.active_root = 0;
+                    self.files.clear();
+                    self.rebuild_tree();
+                    self.input_editor = LineEditor::new();
+                    self.mode = Mode::SetupRoot;
+                } else {
+                    if self.active_root >= self.config.roots.len() {
+                        self.active_root = self.config.roots.len() - 1;
+                    }
+                    let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
+                    self.mode = Mode::RootSwitcher { selected: new_sel };
                     if let Err(e) = self.refresh_files() {
                         self.status_message = format!("Refresh error: {e}");
                     }
                     self.update_status();
-                    if !self.pending_ambiguous.is_empty() {
-                        self.mode = Mode::ResolveAmbiguous {
-                            item: 0,
-                            selected: 0,
-                        };
-                    } else {
-                        self.mode = Mode::Normal;
-                    }
                 }
-                return;
             }
-            Mode::Diff { .. } => {
-                // Any key exits diff
-                self.mode = Mode::Normal;
-                return;
-            }
-            Mode::ResolveAmbiguous { item, selected } => {
-                let item = *item;
-                let selected = *selected;
-                let total_items = self.pending_ambiguous.len();
-                let candidates = self
-                    .pending_ambiguous
-                    .get(item)
-                    .map(|m| m.candidates.len())
-                    .unwrap_or(0);
-                match key.code {
-                    KeyCode::Esc => {
-                        self.pending_ambiguous.clear();
-                        self.mode = Mode::Normal;
-                    }
-                    KeyCode::Char('j') | KeyCode::Down if candidates > 0 => {
-                        let new_sel = (selected + 1).min(candidates - 1);
-                        self.mode = Mode::ResolveAmbiguous {
-                            item,
-                            selected: new_sel,
-                        };
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        let new_sel = selected.saturating_sub(1);
-                        self.mode = Mode::ResolveAmbiguous {
-                            item,
-                            selected: new_sel,
-                        };
-                    }
-                    KeyCode::Char('s') => {
-                        // Skip this one
-                        let next = item + 1;
-                        if next < total_items {
-                            self.mode = Mode::ResolveAmbiguous {
-                                item: next,
-                                selected: 0,
-                            };
-                        } else {
-                            self.pending_ambiguous.clear();
-                            self.mode = Mode::Normal;
-                            self.status_message = "Ambiguous resolution complete.".into();
-                        }
-                    }
-                    KeyCode::Enter if candidates > 0 => {
-                        self.apply_ambiguous_pick(item, selected);
-                        let next = item + 1;
-                        if next < total_items {
-                            self.mode = Mode::ResolveAmbiguous {
-                                item: next,
-                                selected: 0,
-                            };
-                        } else {
-                            self.pending_ambiguous.clear();
-                            self.mode = Mode::Normal;
-                            self.rebuild_tree();
-                            self.update_status();
-                            self.status_message = "Ambiguous resolution complete.".into();
-                        }
-                    }
-                    _ => {}
-                }
-                return;
-            }
-            Mode::RootSwitcher { selected } => {
-                let sel = *selected;
-                match key.code {
-                    KeyCode::Esc => {
-                        self.mode = Mode::Normal;
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        let max = self.config.roots.len().saturating_sub(1);
-                        self.mode = Mode::RootSwitcher {
-                            selected: (sel + 1).min(max),
-                        };
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        self.mode = Mode::RootSwitcher {
-                            selected: sel.saturating_sub(1),
-                        };
-                    }
-                    KeyCode::Enter => {
-                        self.mode = Mode::Normal;
-                        self.switch_root(sel);
-                    }
-                    KeyCode::Char('a') => {
-                        self.input_editor = LineEditor::new();
-                        self.mode = Mode::AddRoot;
-                    }
-                    KeyCode::Char('d') if sel < self.config.roots.len() => {
-                        if let Err(e) = self.config.remove_root(sel) {
-                            self.status_message = format!("Remove root failed: {e}");
-                            return;
-                        }
-                        if self.config.roots.is_empty() {
-                            self.active_root = 0;
-                            self.files.clear();
-                            self.rebuild_tree();
-                            self.input_editor = LineEditor::new();
-                            self.mode = Mode::SetupRoot;
-                        } else {
-                            if self.active_root >= self.config.roots.len() {
-                                self.active_root = self.config.roots.len() - 1;
-                            }
-                            let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
-                            self.mode = Mode::RootSwitcher { selected: new_sel };
-                            if let Err(e) = self.refresh_files() {
-                                self.status_message = format!("Refresh error: {e}");
-                            }
-                            self.update_status();
-                        }
-                    }
-                    _ => {}
-                }
-                return;
-            }
-            Mode::SetupRoot | Mode::AddRoot => {
-                match key.code {
-                    KeyCode::Esc => {
-                        if matches!(self.mode, Mode::AddRoot) {
-                            // Go back to root switcher
-                            self.mode = Mode::RootSwitcher {
-                                selected: self.active_root,
-                            };
-                        }
-                        // SetupRoot: no escape if no roots (must enter one)
-                        // But allow quit
-                    }
-                    KeyCode::Enter => {
-                        let raw = self.input_editor.content.trim().to_string();
-                        if raw.is_empty() {
-                            return;
-                        }
-                        let expanded = if let Some(rest) = raw.strip_prefix('~') {
-                            if let Some(home) = dirs::home_dir() {
-                                home.join(rest.strip_prefix('/').unwrap_or(rest))
-                            } else {
-                                PathBuf::from(&raw)
-                            }
-                        } else {
-                            PathBuf::from(&raw)
-                        };
-                        if !expanded.is_dir() {
-                            self.mode =
-                                Mode::Message(format!("Not a directory: {}", expanded.display()));
-                            return;
-                        }
-                        if let Err(e) = self.config.add_root(expanded) {
-                            self.mode = Mode::Message(format!("Add root failed: {e}"));
-                            return;
-                        }
-                        self.active_root = self.config.roots.len() - 1;
-                        if let Err(e) = self.refresh_files() {
-                            self.status_message = format!("Refresh error: {e}");
-                        }
-                        self.update_status();
-                        self.mode = Mode::Normal;
-                    }
-                    KeyCode::Char('q')
-                        if key.modifiers.contains(KeyModifiers::CONTROL)
-                            && matches!(self.mode, Mode::SetupRoot) =>
-                    {
-                        self.should_quit = true;
-                    }
-                    _ => {
-                        self.input_editor.handle_key(key);
-                    }
-                }
-                return;
-            }
-            Mode::Normal => {}
+            _ => {}
         }
+    }
 
-        // Normal mode keybindings
+    fn handle_setup_or_add_root_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                if matches!(self.mode, Mode::AddRoot) {
+                    self.mode = Mode::RootSwitcher {
+                        selected: self.active_root,
+                    };
+                }
+                // SetupRoot: no escape — must configure a root or Ctrl+Q to quit.
+            }
+            KeyCode::Enter => {
+                let raw = self.input_editor.content.trim().to_string();
+                if raw.is_empty() {
+                    return;
+                }
+                let expanded = expand_tilde(&raw);
+                if !expanded.is_dir() {
+                    self.mode = Mode::Message(format!("Not a directory: {}", expanded.display()));
+                    return;
+                }
+                if let Err(e) = self.config.add_root(expanded) {
+                    self.mode = Mode::Message(format!("Add root failed: {e}"));
+                    return;
+                }
+                self.active_root = self.config.roots.len() - 1;
+                if let Err(e) = self.refresh_files() {
+                    self.status_message = format!("Refresh error: {e}");
+                }
+                self.update_status();
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Char('q')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(self.mode, Mode::SetupRoot) =>
+            {
+                self.should_quit = true;
+            }
+            _ => {
+                self.input_editor.handle_key(key);
+            }
+        }
+    }
+
+    fn handle_normal_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.mode = Mode::Help,
@@ -514,7 +518,6 @@ impl App {
                 self.update_status();
             }
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
-                // If it's a directory, toggle open; if file, already previewed
                 self.tree_state.toggle_selected();
                 self.update_preview();
                 self.update_status();
@@ -525,28 +528,9 @@ impl App {
                 self.update_status();
             }
             KeyCode::Char('u') => self.do_sync_up(),
-            KeyCode::Char('d') => {
-                if let Some(ref rel) = self.selected_file() {
-                    let has_entry = self
-                        .current_root()
-                        .map(|r| self.store.get(r, rel).is_some())
-                        .unwrap_or(false);
-                    if has_entry {
-                        self.mode = Mode::Confirm {
-                            message: format!(
-                                "Pull remote content for {rel}? Local changes will be overwritten."
-                            ),
-                            action: ConfirmAction::SyncDown,
-                        };
-                    } else {
-                        self.status_message = "No gist mapped for this file.".into();
-                    }
-                }
-            }
+            KeyCode::Char('d') => self.confirm_sync_down(),
             KeyCode::Char('c') => self.do_copy_url(),
-            KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.do_diff();
-            }
+            KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_hydration();
             }
@@ -567,6 +551,26 @@ impl App {
                 };
             }
             _ => {}
+        }
+    }
+
+    fn confirm_sync_down(&mut self) {
+        let Some(ref rel) = self.selected_file() else {
+            return;
+        };
+        let has_entry = self
+            .current_root()
+            .map(|r| self.store.get(r, rel).is_some())
+            .unwrap_or(false);
+        if has_entry {
+            self.mode = Mode::Confirm {
+                message: format!(
+                    "Pull remote content for {rel}? Local changes will be overwritten."
+                ),
+                action: ConfirmAction::SyncDown,
+            };
+        } else {
+            self.status_message = "No gist mapped for this file.".into();
         }
     }
 
@@ -703,7 +707,7 @@ impl App {
 
         self.status_message = format!("Pushing {rel}...");
 
-        tokio::spawn(async move {
+        self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
             let result = sync::push(
                 &client,
@@ -749,7 +753,7 @@ impl App {
 
         self.status_message = format!("Pulling {rel}...");
 
-        tokio::spawn(async move {
+        self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
             let result = sync::pull(&client, &entry, &filename).await;
             let _ = tx.send(AsyncEvent::PullDone {
@@ -818,7 +822,7 @@ impl App {
 
         self.status_message = "Fetching remote for diff...".into();
 
-        tokio::spawn(async move {
+        self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
             let result = sync::full_status(&client, &local_for_task, &entry, &filename).await;
             let _ = tx.send(AsyncEvent::StatusCheck {
@@ -858,7 +862,7 @@ impl App {
             }
         }
 
-        tokio::spawn(async move {
+        self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
             let tx2 = tx.clone();
             let result =
@@ -914,7 +918,7 @@ impl App {
         self.status_message = "Fetching Google Doc...".into();
         self.mode = Mode::Normal; // temporary, will switch to GdocFilename on result
 
-        tokio::spawn(async move {
+        self.spawn_tracked(async move {
             let result = crate::gdoc::fetch_doc_markdown(&doc_id).await;
             let _ = tx.send(AsyncEvent::GdocFetched(result.map_err(|e| e.to_string())));
         });
@@ -969,5 +973,18 @@ impl App {
         if let Err(e) = self.refresh_files() {
             self.status_message = format!("Saved but refresh failed: {e}");
         }
+    }
+}
+
+/// Expand a leading `~` to the user's home directory. Returns the input
+/// unchanged if it doesn't start with `~` or the home directory can't be
+/// resolved.
+fn expand_tilde(raw: &str) -> PathBuf {
+    if let Some(rest) = raw.strip_prefix('~')
+        && let Some(home) = dirs::home_dir()
+    {
+        home.join(rest.strip_prefix('/').unwrap_or(rest))
+    } else {
+        PathBuf::from(raw)
     }
 }

@@ -17,9 +17,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let main_area = chunks[0];
     let status_area = chunks[1];
 
-    // Main area: tree (40%) | preview/diff (60%)
-    let panes = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(main_area);
+    // Main area: tree pane sized adaptively (clamped 28..=48 cols) so paths
+    // are readable on narrow terminals without dominating wide ones.
+    let tree_width = (main_area.width / 3).clamp(28, 48);
+    let panes =
+        Layout::horizontal([Constraint::Length(tree_width), Constraint::Min(0)]).split(main_area);
 
     // Tree pane
     let g = crate::glyphs::glyphs();

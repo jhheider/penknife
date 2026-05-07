@@ -64,6 +64,9 @@ async fn main() -> color_eyre::Result<()> {
         }
     }
 
+    // Cancel any outstanding background tasks before tearing down the runtime.
+    app.abort_tasks();
+
     // Restore terminal
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
