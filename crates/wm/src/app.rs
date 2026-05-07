@@ -311,24 +311,22 @@ impl App {
                         self.input_editor = LineEditor::new();
                         self.mode = Mode::AddRoot;
                     }
-                    KeyCode::Char('d') => {
-                        if sel < self.config.roots.len() {
-                            let _ = self.config.remove_root(sel);
-                            if self.config.roots.is_empty() {
-                                self.active_root = 0;
-                                self.files.clear();
-                                self.rebuild_tree();
-                                self.input_editor = LineEditor::new();
-                                self.mode = Mode::SetupRoot;
-                            } else {
-                                if self.active_root >= self.config.roots.len() {
-                                    self.active_root = self.config.roots.len() - 1;
-                                }
-                                let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
-                                self.mode = Mode::RootSwitcher { selected: new_sel };
-                                let _ = self.refresh_files();
-                                self.update_status();
+                    KeyCode::Char('d') if sel < self.config.roots.len() => {
+                        let _ = self.config.remove_root(sel);
+                        if self.config.roots.is_empty() {
+                            self.active_root = 0;
+                            self.files.clear();
+                            self.rebuild_tree();
+                            self.input_editor = LineEditor::new();
+                            self.mode = Mode::SetupRoot;
+                        } else {
+                            if self.active_root >= self.config.roots.len() {
+                                self.active_root = self.config.roots.len() - 1;
                             }
+                            let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
+                            self.mode = Mode::RootSwitcher { selected: new_sel };
+                            let _ = self.refresh_files();
+                            self.update_status();
                         }
                     }
                     _ => {}

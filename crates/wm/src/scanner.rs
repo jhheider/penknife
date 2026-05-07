@@ -15,7 +15,7 @@ pub struct ScannedFile {
 pub fn scan_directory(root: &Path) -> Result<Vec<ScannedFile>> {
     let mut files = Vec::new();
     walk_dir(root, root, &mut files)?;
-    files.sort_by(|a, b| b.modified.cmp(&a.modified));
+    files.sort_by_key(|b| std::cmp::Reverse(b.modified));
     Ok(files)
 }
 
