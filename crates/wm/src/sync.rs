@@ -144,3 +144,61 @@ pub async fn pull(
 
     Ok((content, updated))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn entry(local: &str, remote: &str) -> FileEntry {
+        FileEntry {
+            gist_id: "g".into(),
+            url: "u".into(),
+            local_sha256: local.into(),
+            remote_sha256: remote.into(),
+            last_synced: Utc.timestamp_opt(0, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn sha256_hex_known_vector() {
+        // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        assert_eq!(
+            sha256_hex(""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn local_status_not_gisted_when_no_entry() {
+        assert_eq!(local_status("hello", None), SyncStatus::NotGisted);
+    }
+
+    #[test]
+    fn local_status_synced_when_hashes_match() {
+        let h = sha256_hex("hello");
+        let e = entry(&h, &h);
+        assert_eq!(local_status("hello", Some(&e)), SyncStatus::Synced);
+    }
+
+    #[test]
+    fn local_status_local_newer_when_local_changed_remote_unchanged() {
+        let stored = sha256_hex("v1");
+        let e = entry(&stored, &stored);
+        assert_eq!(local_status("v2", Some(&e)), SyncStatus::LocalNewer);
+    }
+
+    #[test]
+    fn local_status_remote_newer_when_remote_diverged() {
+        let local_hash = sha256_hex("v1");
+        let e = entry(&local_hash, "different-remote-hash");
+        assert_eq!(local_status("v1", Some(&e)), SyncStatus::RemoteNewer);
+    }
+
+    #[test]
+    fn local_status_conflict_when_both_diverged() {
+        let stored = sha256_hex("v1");
+        let e = entry(&stored, "different-remote-hash");
+        assert_eq!(local_status("v3", Some(&e)), SyncStatus::Conflict);
+    }
+}

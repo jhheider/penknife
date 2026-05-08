@@ -239,3 +239,33 @@ fn rate_limit_wait(resp: &Response) -> Option<Duration> {
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_header_detects_next() {
+        let h = "<https://api.github.com/gists?page=2>; rel=\"next\", \
+                 <https://api.github.com/gists?page=10>; rel=\"last\"";
+        assert!(link_header_has_next(h));
+    }
+
+    #[test]
+    fn link_header_no_next_on_last_page() {
+        let h = "<https://api.github.com/gists?page=1>; rel=\"first\", \
+                 <https://api.github.com/gists?page=9>; rel=\"prev\"";
+        assert!(!link_header_has_next(h));
+    }
+
+    #[test]
+    fn link_header_empty_means_no_next() {
+        assert!(!link_header_has_next(""));
+    }
+
+    #[test]
+    fn backoff_grows_with_attempt() {
+        assert!(backoff(2) > backoff(1));
+        assert!(backoff(3) > backoff(2));
+    }
+}

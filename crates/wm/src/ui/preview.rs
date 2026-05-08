@@ -169,3 +169,62 @@ fn parse_inline(text: &str) -> Vec<Span<'static>> {
     flush(&mut buf, &mut spans);
     spans
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span_texts(spans: &[Span<'static>]) -> Vec<String> {
+        spans.iter().map(|s| s.content.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_inline_plain_text_one_span() {
+        let s = parse_inline("just text");
+        assert_eq!(span_texts(&s), vec!["just text"]);
+    }
+
+    #[test]
+    fn parse_inline_extracts_inline_code() {
+        let s = parse_inline("run `cargo build` then go");
+        assert_eq!(span_texts(&s), vec!["run ", "cargo build", " then go"]);
+    }
+
+    #[test]
+    fn parse_inline_extracts_bold() {
+        let s = parse_inline("hello **world** here");
+        assert_eq!(span_texts(&s), vec!["hello ", "world", " here"]);
+    }
+
+    #[test]
+    fn parse_inline_extracts_italic() {
+        let s = parse_inline("a *cool* thing");
+        assert_eq!(span_texts(&s), vec!["a ", "cool", " thing"]);
+    }
+
+    #[test]
+    fn parse_inline_unclosed_delimiter_falls_through() {
+        // Backtick with no close → treat as raw text.
+        let s = parse_inline("a `b c");
+        assert_eq!(span_texts(&s), vec!["a `b c"]);
+    }
+
+    #[test]
+    fn parse_inline_does_not_treat_double_star_as_italic() {
+        // `**bold**` should be one bold span, not nested italic spans.
+        let s = parse_inline("**x**");
+        assert_eq!(span_texts(&s), vec!["x"]);
+    }
+
+    #[test]
+    fn highlight_tracks_code_block_state() {
+        let md = "regular\n```\nin block\n```\nafter";
+        let lines = highlight(md);
+        assert_eq!(lines.len(), 5);
+        // The "in block" line is inside the fence, so its single span should
+        // be styled green (whole-line code block style).
+        let in_block = &lines[2];
+        // It's a single styled line — we only verify it has at least one span.
+        assert!(!in_block.spans.is_empty());
+    }
+}

@@ -73,6 +73,8 @@ pub struct App {
     pub token: Option<String>,
     pub active_root: usize,
     pub pending_ambiguous: Vec<AmbiguousMatch>,
+    /// If set, copy the URL of this rel_path after the next successful PushDone.
+    pub pending_copy: Option<String>,
     /// Outstanding spawned tokio tasks; aborted on quit.
     pub tasks: Vec<JoinHandle<()>>,
 }
@@ -117,6 +119,7 @@ impl App {
             token,
             active_root: 0,
             pending_ambiguous: Vec::new(),
+            pending_copy: None,
             tasks: Vec::new(),
         };
         app.rebuild_tree();
@@ -590,8 +593,14 @@ impl App {
                     }
                     self.status_message = format!("Pushed {rel_path} → {url}");
                     self.rebuild_tree();
+                    // Follow up on a queued copy-url request, if it's for this file.
+                    if self.pending_copy.as_ref().is_some_and(|p| *p == rel_path) {
+                        self.pending_copy = None;
+                        self.copy_to_clipboard(&url);
+                    }
                 }
                 Err(e) => {
+                    self.pending_copy = None;
                     self.status_message = format!("Push failed: {e}");
                 }
             },
@@ -773,23 +782,32 @@ impl App {
             .and_then(|r| self.store.get(r, &rel))
             .cloned();
         if let Some(entry) = entry {
-            match arboard::Clipboard::new() {
-                Ok(mut clip) => {
-                    let url = entry.url.clone();
-                    if clip.set_text(&url).is_ok() {
-                        self.status_message = format!("Copied: {url}");
-                    } else {
-                        self.status_message = "Failed to copy to clipboard.".into();
-                    }
-                }
-                Err(e) => {
-                    self.status_message = format!("Clipboard error: {e}");
-                }
-            }
+            self.copy_to_clipboard(&entry.url.clone());
         } else {
-            // Auto-push first, then copy
+            // Queue the copy and trigger a push; PushDone will follow up.
+            self.pending_copy = Some(rel.clone());
             self.do_sync_up();
             self.status_message = format!("Pushing {rel} first, then copy URL...");
+        }
+    }
+
+    /// Copy a URL to the system clipboard, returning true on success.
+    fn copy_to_clipboard(&mut self, url: &str) -> bool {
+        match arboard::Clipboard::new() {
+            Ok(mut clip) => match clip.set_text(url) {
+                Ok(()) => {
+                    self.status_message = format!("Copied: {url}");
+                    true
+                }
+                Err(_) => {
+                    self.status_message = "Failed to copy to clipboard.".into();
+                    false
+                }
+            },
+            Err(e) => {
+                self.status_message = format!("Clipboard error: {e}");
+                false
+            }
         }
     }
 
@@ -986,5 +1004,30 @@ fn expand_tilde(raw: &str) -> PathBuf {
         home.join(rest.strip_prefix('/').unwrap_or(rest))
     } else {
         PathBuf::from(raw)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_tilde_passes_absolute_through() {
+        assert_eq!(expand_tilde("/foo/bar"), PathBuf::from("/foo/bar"));
+    }
+
+    #[test]
+    fn expand_tilde_passes_relative_through() {
+        assert_eq!(expand_tilde("foo/bar"), PathBuf::from("foo/bar"));
+    }
+
+    #[test]
+    fn expand_tilde_rewrites_home_prefix() {
+        let Some(home) = dirs::home_dir() else {
+            return; // can't validate without a home dir
+        };
+        assert_eq!(expand_tilde("~/Documents"), home.join("Documents"));
+        // Bare ~ also expands to home.
+        assert_eq!(expand_tilde("~"), home);
     }
 }

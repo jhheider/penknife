@@ -1,149 +1,111 @@
 # gist-tools
 
-A terminal UI for managing GitHub Gists with local sync, search, and diff capabilities.
+A terminal UI for managing local markdown files synced to GitHub Gists.
 
 ## Features
 
-- **Browse gists** — tree-based navigation of local gist files
-- **Search & filter** — fast in-memory search across gists
-- **Diff viewer** — compare local vs remote versions
-- **Sync** — pull gists from GitHub, push local changes
-- **Google Docs integration** — paste Google Docs URLs to hydrate content
-- **Persistent state** — config and sync history stored locally
+- **Tree-based file browser** for one or more local writing directories
+- **Push / pull** local markdown files to/from gists; per-file sync status
+- **Diff view** of local vs remote
+- **Hydration** — match existing gists to local files by filename + content hash, with an interactive resolver for ambiguous cases
+- **Multi-root** — switch between several configured directories from inside the app
+- **Search / filter** the file tree as you type
+- **Markdown preview** with syntax highlighting (headings, code blocks, inline code, bold, italic, lists, blockquotes)
+- **Google Doc import** — fetch a public Google Doc and save it as markdown under any tree
+- **Atomic on-disk state** with retry/backoff and rate-limit awareness for the GitHub API
 
 ## Quick Start
 
 ### Prerequisites
 
-- Rust 1.70+
-- GitHub account + personal access token
-- Git
+- Rust (edition 2024 toolchain — `rustup update stable` if you're behind)
+- A GitHub token with `gist` scope, exposed via `$GITHUB_TOKEN` or `gh auth token`
 
-### Installation
+### Install
 
 ```bash
-git clone https://github.com/jhheider/gist-tools.git
+git clone git@github.com:jhheider/gist-tools.git
 cd gist-tools
 cargo build --release
 ./target/release/wm
 ```
 
-### Configuration
+### First run
 
-On first run, the app will:
-1. Prompt for a root directory (defaults to `~/Dropbox/Personal/RP/shared` if it exists)
-2. Resolve your GitHub token via `gh auth` or environment (`GITHUB_TOKEN`)
-3. Create a `.gist-tools/config.json` in the root directory
+If no roots are configured, the app opens a setup dialog. Type a path to a directory of markdown files (`~` is expanded) and press **Enter**. From there, all writings under that directory are scanned recursively.
 
-**Config file** (`~/.gist-tools/config.json`):
-```json
-{
-  "root": "/path/to/gists",
-  "github_token": "ghp_..."
-}
-```
+State is persisted under your platform data dir (`~/Library/Application Support/writings-manager` on macOS, `~/.local/share/writings-manager` on Linux):
+
+- `config.json` — list of configured roots
+- `store.json` — per-(root, file) gist mappings
+
+Tokens are **not** persisted by this tool — they're resolved fresh on each launch.
 
 ## Usage
 
-### Keyboard Shortcuts
+### Keybindings
 
-| Key | Action |
-|-----|--------|
-| `j/k` or `↓/↑` | Navigate tree |
-| `Enter` | Select/view file |
-| `?` | Help |
-| `/` | Search |
-| `d` | Diff (local vs remote) |
-| `s` | Sync down (fetch remote) |
-| `c` | Confirm action (in dialogs) |
-| `q` | Quit |
+| Key | Mode | Action |
+|---|---|---|
+| `j/k` `↓/↑` | Normal | Navigate tree |
+| `Enter` `l` `→` | Normal | Expand directory / select file |
+| `h` `←` `Bksp` | Normal | Collapse directory |
+| `u` | Normal | Push selected file (create or update gist) |
+| `d` | Normal | Pull remote into selected file (with confirmation) |
+| `D` | Normal | Diff local vs remote |
+| `c` | Normal | Copy gist URL to clipboard (auto-pushes if not yet gisted) |
+| `H` | Normal | Hydrate — match existing gists to files |
+| `I` | Normal | Import a Google Doc as markdown |
+| `r` | Normal | Refresh the tree |
+| `/` | Normal | Search / filter |
+| `Tab` | Normal | Open root switcher |
+| `?` | Normal | Help |
+| `q` | Normal | Quit |
+| `j/k` `Enter` `a` `d` `Esc` | Root switcher | Navigate / switch / add / delete root / close |
+| `j/k` `Enter` `s` `Esc` | Ambiguous resolver | Navigate candidates / pick / skip / abort |
+| `y` `n` | Confirm dialog | Confirm / dismiss |
+| `Esc` | Most modes | Cancel and return to Normal |
 
-### Workflows
+### Status icons
 
-**Fetch all gists:**
-```
-1. Start app
-2. Select "Sync" or press `s`
-3. Confirm with `c`
-4. App hydrates gists from GitHub
-```
+Each file in the tree carries a sync-state icon. By default these are emoji; set `WM_NO_EMOJI=1` (or run under a `TERM` of `dumb`/`linux`/`vt100`/`vt220`) to fall back to ASCII.
 
-**Search for a gist:**
-```
-1. Press `/`
-2. Type search term
-3. Results filter in real-time
-4. Press Enter to select
-```
+| Emoji | ASCII | Meaning |
+|---|---|---|
+| ✅ | `[=]` | Synced |
+| ⬆️ | `[^]` | Local newer (push to update) |
+| ⬇️ | `[v]` | Remote newer (pull to update) |
+| ❗ | `[!]` | Conflict — both diverged |
+| ⚪ | `[ ]` | Not yet mapped to a gist |
 
-**View diff:**
-```
-1. Navigate to a file
-2. Press `d` to show local vs remote diff
-3. Review changes
-```
+### Hydration
+
+Press `H` to match your existing gists to local files. Three phases:
+
+1. List all your gists (paginated, with retry/backoff and rate-limit handling).
+2. Auto-map files where filename + content hash give a unique match.
+3. For files where multiple gists share the same filename and no content match exists, the **ambiguous resolver** prompts you to pick one (or skip).
+
+Hydration runs in the background; concurrent push/pull is preserved (results merge rather than reload-from-disk).
 
 ## Architecture
 
-### Workspace
+Two-crate Cargo workspace:
 
-- **gist-rs** — GitHub Gist API client + auth
-  - `client.rs` — reqwest-based HTTP client
-  - `auth.rs` — GitHub token resolution
-  - `types.rs` — Gist data structures
-
-- **wm** — Terminal UI application
-  - `app.rs` — state machine + event handling
-  - `ui/` — ratatui rendering components
-  - `sync.rs` — sync logic
-  - `hydrate.rs` — Google Docs → markdown conversion
-  - `store.rs` — local cache/state persistence
+- **`crates/gist-rs`** — Standalone GitHub Gist client. Auth via `$GITHUB_TOKEN` or `gh auth token`. Idempotent GET retries with exponential backoff and `Retry-After` / `X-RateLimit-Reset` handling. Pagination via `Link` headers.
+- **`crates/wm`** — The TUI. Modes for normal navigation, search, diff, confirm, hydration progress, ambiguous-match resolution, root switcher, setup, and Google Doc import. State persistence via atomic temp-file + rename.
 
 ## Development
 
-### Build
-
 ```bash
-cargo build
+cargo build           # build
+cargo test            # run unit tests
+cargo clippy          # lint
+cargo fmt             # format (always run before committing)
 ```
 
-### Test
-
-```bash
-cargo test
-```
-
-### Format & Lint
-
-```bash
-cargo fmt
-cargo clippy
-```
-
-## Known Issues
-
-- **Slow hydration**: Large gist collections (500+) lack progress indicator. Restart needed to populate tree after hydration completes.
-- **Config path**: Hardcoded Dropbox path breaks on systems without Dropbox. Use env var or manual config edit as workaround.
-- **No multi-directory support**: Single root directory only. Future enhancement planned.
-
-## Roadmap
-
-- [ ] Progress indicator during hydration
-- [ ] Directory picker on startup
-- [ ] Multi-directory / multi-root support
-- [ ] Color themes + emoji indicators
-- [ ] Gist creation/deletion UI
-- [ ] Markdown preview pane
-- [ ] Config file wizard
+The store format is versioned; `Store::load` will migrate v1 → v2 in place on first launch and persist the new format.
 
 ## License
 
-MIT
-
-## Contributing
-
-Bug reports and feature requests welcome. Open an issue on GitHub.
-
----
-
-**v0.1.0** — Initial release. Functional core with rough edges.
+MIT.
