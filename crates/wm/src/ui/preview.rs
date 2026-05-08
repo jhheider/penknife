@@ -2,11 +2,23 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 /// Render a markdown file preview with basic syntax highlighting.
-pub fn render_preview(f: &mut Frame, area: Rect, content: &str, title: &str, scroll: u16) {
+pub fn render_preview(
+    f: &mut Frame,
+    area: Rect,
+    content: &str,
+    title: &str,
+    scroll: u16,
+    focused: bool,
+) {
+    let border = if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title.to_string())
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(border))
         .title_style(Style::default().fg(Color::Cyan));
 
     let lines = highlight(content);

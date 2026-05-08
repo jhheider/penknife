@@ -47,26 +47,31 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 
 | Key | Mode | Action |
 |---|---|---|
-| `j/k` `↓/↑` | Normal | Navigate tree |
-| `Enter` `l` `→` | Normal | Expand directory / select file |
-| `h` `←` `Bksp` | Normal | Collapse directory |
+| `Tab` | Normal | Toggle focus: tree pane ↔ preview/diff pane |
+| `j/k` `↓/↑` | Normal | Navigate the focused pane |
+| `Enter` `l` `→` | Normal (tree) | Expand directory / select file |
+| `h` `←` `Bksp` | Normal (tree) | Collapse directory |
+| `PgUp/PgDn` | Normal, Diff | Scroll preview/diff pane |
 | `u` | Normal | Push selected file (create or update gist) |
 | `d` | Normal | Pull remote into selected file (with confirmation) |
 | `D` | Normal | Diff local vs remote |
 | `c` | Normal | Copy gist URL to clipboard (auto-pushes if not yet gisted) |
 | `H` | Normal | Hydrate — match existing gists to files |
 | `I` | Normal | Import a Google Doc as markdown |
+| `R` | Normal | Switch root directory |
 | `r` | Normal | Refresh the tree |
 | `/` | Normal | Search / filter |
-| `Tab` | Normal | Open root switcher |
-| `PgUp/PgDn` | Normal, Diff | Scroll preview/diff pane |
-| Mouse wheel | Anywhere | Scroll the pane under the cursor |
 | `?` | Normal | Help |
 | `q` | Normal | Quit |
+| `j/k` `↑/↓` `PgUp/PgDn` | Diff | Scroll the diff |
 | `j/k` `Enter` `a` `d` `Esc` | Root switcher | Navigate / switch / add / delete root / close |
 | `j/k` `Enter` `s` `Esc` | Ambiguous resolver | Navigate candidates / pick / skip / abort |
 | `y` `n` | Confirm dialog | Confirm / dismiss |
 | `Esc` | Most modes | Cancel and return to Normal |
+
+### Mouse
+
+By default, mouse capture is **off** so terminal-native features (cmd-click on URLs, native text selection, the terminal's own scrollback) keep working. Set `WM_MOUSE=1` in the environment to enable wheel-scroll routing into the panes — useful if you don't need cmd-click and prefer wheel scrolling over PgUp/PgDn.
 
 ### Status icons
 

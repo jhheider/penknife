@@ -8,7 +8,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use tui_tree_widget::Tree;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, PaneFocus};
 
 /// Render the full UI.
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -29,10 +29,17 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Tree pane
     let g = crate::glyphs::glyphs();
+    let tree_focused = app.focused_pane == PaneFocus::Tree;
+    let right_focused = app.focused_pane == PaneFocus::Right;
+    let tree_border = if tree_focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
     let tree_block = Block::default()
         .borders(Borders::ALL)
         .title(format!("{} Files", g.file_pane))
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(tree_border))
         .title_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -49,7 +56,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     match &app.mode {
         Mode::Diff { local, remote } => {
             let title = app.selected_file().unwrap_or_default();
-            diff::render_diff(f, panes[1], local, remote, &title, app.diff_scroll);
+            diff::render_diff(
+                f,
+                panes[1],
+                local,
+                remote,
+                &title,
+                app.diff_scroll,
+                right_focused,
+            );
         }
         _ => {
             let title = app.selected_file().unwrap_or_default();
@@ -59,6 +74,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 &app.preview_content,
                 &title,
                 app.preview_scroll,
+                right_focused,
             );
         }
     }

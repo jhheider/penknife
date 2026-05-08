@@ -84,8 +84,18 @@ pub struct App {
     pub tree_pane_rect: Rect,
     /// Last-rendered area for the right pane (preview/diff).
     pub right_pane_rect: Rect,
+    /// Which pane currently captures j/k/arrow input in Normal mode.
+    pub focused_pane: PaneFocus,
+    /// True when crossterm mouse capture is currently enabled (env var only).
+    pub mouse_capture: bool,
     /// Outstanding spawned tokio tasks; aborted on quit.
     pub tasks: Vec<JoinHandle<()>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneFocus {
+    Tree,
+    Right,
 }
 
 impl App {
@@ -133,6 +143,8 @@ impl App {
             diff_scroll: 0,
             tree_pane_rect: Rect::default(),
             right_pane_rect: Rect::default(),
+            focused_pane: PaneFocus::Tree,
+            mouse_capture: false,
             tasks: Vec::new(),
         };
         app.rebuild_tree();
@@ -321,7 +333,10 @@ impl App {
         match key.code {
             KeyCode::PageDown => self.scroll_right_pane(10, true),
             KeyCode::PageUp => self.scroll_right_pane(10, false),
-            // Any other key exits diff.
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_right_pane(1, true),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_right_pane(1, false),
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
+            // Anything else exits diff.
             _ => self.mode = Mode::Normal,
         }
     }
@@ -566,22 +581,24 @@ impl App {
                 self.search_editor = LineEditor::new();
                 self.mode = Mode::Search;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tree_state.key_down();
-                self.update_preview();
-                self.update_status();
+            KeyCode::Tab => {
+                self.focused_pane = match self.focused_pane {
+                    PaneFocus::Tree => PaneFocus::Right,
+                    PaneFocus::Right => PaneFocus::Tree,
+                };
             }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.tree_state.key_up();
-                self.update_preview();
-                self.update_status();
-            }
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+            KeyCode::Char('j') | KeyCode::Down => self.nav_down(),
+            KeyCode::Char('k') | KeyCode::Up => self.nav_up(),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right
+                if self.focused_pane == PaneFocus::Tree =>
+            {
                 self.tree_state.toggle_selected();
                 self.update_preview();
                 self.update_status();
             }
-            KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
+            KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace
+                if self.focused_pane == PaneFocus::Tree =>
+            {
                 self.tree_state.key_left();
                 self.update_preview();
                 self.update_status();
@@ -600,18 +617,40 @@ impl App {
                     self.status_message = "Refreshed.".into();
                 }
             }
-            KeyCode::Char('I') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.input_editor = LineEditor::new();
-                self.mode = Mode::GdocUrl;
-            }
-            KeyCode::Tab => {
+            KeyCode::Char('R') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = Mode::RootSwitcher {
                     selected: self.active_root,
                 };
             }
+            KeyCode::Char('I') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input_editor = LineEditor::new();
+                self.mode = Mode::GdocUrl;
+            }
             KeyCode::PageDown => self.scroll_right_pane(10, true),
             KeyCode::PageUp => self.scroll_right_pane(10, false),
             _ => {}
+        }
+    }
+
+    fn nav_down(&mut self) {
+        match self.focused_pane {
+            PaneFocus::Tree => {
+                self.tree_state.key_down();
+                self.update_preview();
+                self.update_status();
+            }
+            PaneFocus::Right => self.scroll_right_pane(1, true),
+        }
+    }
+
+    fn nav_up(&mut self) {
+        match self.focused_pane {
+            PaneFocus::Tree => {
+                self.tree_state.key_up();
+                self.update_preview();
+                self.update_status();
+            }
+            PaneFocus::Right => self.scroll_right_pane(1, false),
         }
     }
 

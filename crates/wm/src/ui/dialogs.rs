@@ -30,22 +30,28 @@ pub fn render_help(f: &mut Frame, area: Rect) {
     let help_text = "\
 Keybindings:
 
-  j/k/↑/↓     Navigate tree
-  Enter/l/→    Expand / select
-  h/←/Bksp    Collapse
-  u            Sync up (push to gist)
-  d            Sync down (pull from gist)
+  Tab          Toggle focus: tree pane ↔ preview/diff pane
+  j/k/↑/↓     Navigate (focused pane)
+  Enter/l/→    Expand / select (tree pane only)
+  h/←/Bksp    Collapse (tree pane only)
+  PgUp/PgDn   Scroll preview/diff pane (any focus)
+
+  u            Push selected file to gist
+  d            Pull remote into selected file
   c            Copy URL to clipboard
-  D            Diff view (local vs remote)
+  D            Diff view
   H            Hydrate (match gists to files)
   /            Search / filter
   I            Google Doc import
-  Tab          Switch root directory
+  R            Switch root directory
   r            Refresh file tree
-  PgUp/PgDn   Scroll preview/diff pane
-  wheel        Scroll the pane under the cursor
   ?            This help
   q            Quit
+
+In Diff view: j/k, arrows, PgUp/PgDn scroll; Esc/q or any other key exits.
+
+Mouse: cmd-click on URLs and native selection work by default.
+Set WM_MOUSE=1 to enable wheel-scroll routing instead.
 
 Press any key to close.";
 
