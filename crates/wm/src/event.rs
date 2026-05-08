@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyEvent};
+use crossterm::event::{self, Event, KeyEvent, MouseEvent};
 use tokio::sync::mpsc;
 
 use crate::hydrate::{AmbiguousMatch, HydrationProgress};
@@ -45,14 +45,23 @@ pub enum AsyncEvent {
     GdocFetched(std::result::Result<String, String>),
 }
 
-/// Poll for a crossterm key event with the given timeout.
-pub fn poll_key(timeout: Duration) -> Option<KeyEvent> {
-    if event::poll(timeout).ok()?
-        && let Event::Key(key) = event::read().ok()?
-    {
-        return Some(key);
+/// User-input events from the terminal that the app cares about.
+#[derive(Debug)]
+pub enum UiEvent {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+}
+
+/// Poll for a crossterm UI event (key or mouse) with the given timeout.
+pub fn poll_event(timeout: Duration) -> Option<UiEvent> {
+    if !event::poll(timeout).ok()? {
+        return None;
     }
-    None
+    match event::read().ok()? {
+        Event::Key(k) => Some(UiEvent::Key(k)),
+        Event::Mouse(m) => Some(UiEvent::Mouse(m)),
+        _ => None,
+    }
 }
 
 pub type AsyncSender = mpsc::UnboundedSender<AsyncEvent>;

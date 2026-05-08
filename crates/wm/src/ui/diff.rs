@@ -3,7 +3,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use similar::{ChangeTag, TextDiff};
 
 /// Render a unified diff between local and remote content.
-pub fn render_diff(f: &mut Frame, area: Rect, local: &str, remote: &str, title: &str) {
+pub fn render_diff(f: &mut Frame, area: Rect, local: &str, remote: &str, title: &str, scroll: u16) {
     let diff = TextDiff::from_lines(remote, local);
     let mut lines: Vec<Line> = Vec::new();
 
@@ -23,6 +23,7 @@ pub fn render_diff(f: &mut Frame, area: Rect, local: &str, remote: &str, title: 
 
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
     f.render_widget(paragraph, area);
 }

@@ -59,6 +59,8 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `r` | Normal | Refresh the tree |
 | `/` | Normal | Search / filter |
 | `Tab` | Normal | Open root switcher |
+| `PgUp/PgDn` | Normal, Diff | Scroll preview/diff pane |
+| Mouse wheel | Anywhere | Scroll the pane under the cursor |
 | `?` | Normal | Help |
 | `q` | Normal | Quit |
 | `j/k` `Enter` `a` `d` `Esc` | Root switcher | Navigate / switch / add / delete root / close |

@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tokio::task::JoinHandle;
 use tui_tree_widget::TreeState;
@@ -75,6 +76,14 @@ pub struct App {
     pub pending_ambiguous: Vec<AmbiguousMatch>,
     /// If set, copy the URL of this rel_path after the next successful PushDone.
     pub pending_copy: Option<String>,
+    /// Vertical scroll offset (rows) for the markdown preview pane.
+    pub preview_scroll: u16,
+    /// Vertical scroll offset (rows) for the diff pane.
+    pub diff_scroll: u16,
+    /// Last-rendered area for the tree pane; used to route mouse events.
+    pub tree_pane_rect: Rect,
+    /// Last-rendered area for the right pane (preview/diff).
+    pub right_pane_rect: Rect,
     /// Outstanding spawned tokio tasks; aborted on quit.
     pub tasks: Vec<JoinHandle<()>>,
 }
@@ -120,6 +129,10 @@ impl App {
             active_root: 0,
             pending_ambiguous: Vec::new(),
             pending_copy: None,
+            preview_scroll: 0,
+            diff_scroll: 0,
+            tree_pane_rect: Rect::default(),
+            right_pane_rect: Rect::default(),
             tasks: Vec::new(),
         };
         app.rebuild_tree();
@@ -212,6 +225,43 @@ impl App {
         } else {
             self.preview_content.clear();
         }
+        // Reset scroll whenever the visible content changes.
+        self.preview_scroll = 0;
+    }
+
+    /// Handle a terminal mouse event. Wheel scroll is routed to whichever
+    /// pane the cursor is over.
+    pub fn handle_mouse(&mut self, event: MouseEvent) {
+        let down = match event.kind {
+            MouseEventKind::ScrollDown => true,
+            MouseEventKind::ScrollUp => false,
+            _ => return,
+        };
+        let over_tree = rect_contains(&self.tree_pane_rect, event.column, event.row);
+        if over_tree {
+            if down {
+                self.tree_state.scroll_down(3);
+            } else {
+                self.tree_state.scroll_up(3);
+            }
+        } else {
+            self.scroll_right_pane(3, down);
+        }
+    }
+
+    /// Scroll the right pane (preview or diff) by `lines` rows. `down=true`
+    /// increases the offset.
+    fn scroll_right_pane(&mut self, lines: u16, down: bool) {
+        let target = if matches!(self.mode, Mode::Diff { .. }) {
+            &mut self.diff_scroll
+        } else {
+            &mut self.preview_scroll
+        };
+        if down {
+            *target = target.saturating_add(lines);
+        } else {
+            *target = target.saturating_sub(lines);
+        }
     }
 
     pub fn update_status(&mut self) {
@@ -259,14 +309,20 @@ impl App {
             Mode::GdocFilename => self.handle_gdoc_filename_key(key),
             Mode::Confirm { .. } => self.handle_confirm_key(key),
             Mode::Hydrating { .. } => self.handle_hydrating_key(),
-            Mode::Diff { .. } => {
-                // Any key exits diff.
-                self.mode = Mode::Normal;
-            }
+            Mode::Diff { .. } => self.handle_diff_key(key),
             Mode::ResolveAmbiguous { .. } => self.handle_resolve_ambiguous_key(key),
             Mode::RootSwitcher { .. } => self.handle_root_switcher_key(key),
             Mode::SetupRoot | Mode::AddRoot => self.handle_setup_or_add_root_key(key),
             Mode::Normal => self.handle_normal_key(key),
+        }
+    }
+
+    fn handle_diff_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::PageDown => self.scroll_right_pane(10, true),
+            KeyCode::PageUp => self.scroll_right_pane(10, false),
+            // Any other key exits diff.
+            _ => self.mode = Mode::Normal,
         }
     }
 
@@ -553,6 +609,8 @@ impl App {
                     selected: self.active_root,
                 };
             }
+            KeyCode::PageDown => self.scroll_right_pane(10, true),
+            KeyCode::PageUp => self.scroll_right_pane(10, false),
             _ => {}
         }
     }
@@ -850,6 +908,7 @@ impl App {
         });
 
         // Start with local-only diff; remote side will be fetched async
+        self.diff_scroll = 0;
         self.mode = Mode::Diff {
             local: local_content,
             remote: format!("(fetching remote content for {gist_id}...)"),
@@ -992,6 +1051,16 @@ impl App {
             self.status_message = format!("Saved but refresh failed: {e}");
         }
     }
+}
+
+/// Check whether `(x, y)` falls inside the given rect.
+fn rect_contains(rect: &Rect, x: u16, y: u16) -> bool {
+    rect.width > 0
+        && rect.height > 0
+        && x >= rect.x
+        && x < rect.x + rect.width
+        && y >= rect.y
+        && y < rect.y + rect.height
 }
 
 /// Expand a leading `~` to the user's home directory. Returns the input

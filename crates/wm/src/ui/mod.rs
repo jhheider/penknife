@@ -23,6 +23,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let panes =
         Layout::horizontal([Constraint::Length(tree_width), Constraint::Min(0)]).split(main_area);
 
+    // Record pane rects so handle_mouse can route wheel events.
+    app.tree_pane_rect = panes[0];
+    app.right_pane_rect = panes[1];
+
     // Tree pane
     let g = crate::glyphs::glyphs();
     let tree_block = Block::default()
@@ -45,11 +49,17 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     match &app.mode {
         Mode::Diff { local, remote } => {
             let title = app.selected_file().unwrap_or_default();
-            diff::render_diff(f, panes[1], local, remote, &title);
+            diff::render_diff(f, panes[1], local, remote, &title, app.diff_scroll);
         }
         _ => {
             let title = app.selected_file().unwrap_or_default();
-            preview::render_preview(f, panes[1], &app.preview_content, &title);
+            preview::render_preview(
+                f,
+                panes[1],
+                &app.preview_content,
+                &title,
+                app.preview_scroll,
+            );
         }
     }
 

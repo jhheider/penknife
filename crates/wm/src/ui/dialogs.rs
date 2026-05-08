@@ -42,6 +42,8 @@ Keybindings:
   I            Google Doc import
   Tab          Switch root directory
   r            Refresh file tree
+  PgUp/PgDn   Scroll preview/diff pane
+  wheel        Scroll the pane under the cursor
   ?            This help
   q            Quit
 

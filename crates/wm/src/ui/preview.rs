@@ -2,7 +2,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 /// Render a markdown file preview with basic syntax highlighting.
-pub fn render_preview(f: &mut Frame, area: Rect, content: &str, title: &str) {
+pub fn render_preview(f: &mut Frame, area: Rect, content: &str, title: &str, scroll: u16) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title.to_string())
@@ -13,7 +13,8 @@ pub fn render_preview(f: &mut Frame, area: Rect, content: &str, title: &str) {
 
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
 
     f.render_widget(paragraph, area);
 }
