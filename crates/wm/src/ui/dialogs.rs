@@ -57,7 +57,7 @@ Files & roots
 In Diff view: j/k, arrows, PgUp/PgDn scroll; Esc/q exits.
 
 Mouse: cmd-click on URLs and native selection work by default.
-Set WM_MOUSE=1 to enable wheel-scroll routing instead.
+Set WM_MOUSE=1 to enable click-to-select + wheel-scroll routing instead.
 
 Press any key to close.";
 

@@ -259,23 +259,43 @@ impl App {
         self.preview_scroll = 0;
     }
 
-    /// Handle a terminal mouse event. Wheel scroll is routed to whichever
-    /// pane the cursor is over.
+    /// Handle a terminal mouse event. Left-click selects (in the tree) or
+    /// switches focus (right pane); wheel scroll is routed to whichever pane
+    /// the cursor is over.
     pub fn handle_mouse(&mut self, event: MouseEvent) {
-        let down = match event.kind {
-            MouseEventKind::ScrollDown => true,
-            MouseEventKind::ScrollUp => false,
-            _ => return,
-        };
         let over_tree = rect_contains(&self.tree_pane_rect, event.column, event.row);
-        if over_tree {
-            if down {
-                self.tree_state.scroll_down(3);
-            } else {
-                self.tree_state.scroll_up(3);
+        let over_right = rect_contains(&self.right_pane_rect, event.column, event.row);
+        match event.kind {
+            MouseEventKind::ScrollDown => {
+                if over_tree {
+                    self.tree_state.scroll_down(3);
+                } else {
+                    self.scroll_right_pane(3, true);
+                }
             }
-        } else {
-            self.scroll_right_pane(3, down);
+            MouseEventKind::ScrollUp => {
+                if over_tree {
+                    self.tree_state.scroll_up(3);
+                } else {
+                    self.scroll_right_pane(3, false);
+                }
+            }
+            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                if over_tree {
+                    let pos = ratatui::layout::Position {
+                        x: event.column,
+                        y: event.row,
+                    };
+                    if self.tree_state.click_at(pos) {
+                        self.focused_pane = PaneFocus::Tree;
+                        self.update_preview();
+                        self.update_status();
+                    }
+                } else if over_right {
+                    self.focused_pane = PaneFocus::Right;
+                }
+            }
+            _ => {}
         }
     }
 

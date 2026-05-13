@@ -77,7 +77,7 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 
 ### Mouse
 
-By default, mouse capture is **off** so terminal-native features (cmd-click on URLs, native text selection, the terminal's own scrollback) keep working. Set `WM_MOUSE=1` in the environment to enable wheel-scroll routing into the panes — useful if you don't need cmd-click and prefer wheel scrolling over PgUp/PgDn.
+By default, mouse capture is **off** so terminal-native features (cmd-click on URLs, native text selection, the terminal's own scrollback) keep working. Set `WM_MOUSE=1` in the environment to enable mouse interaction inside the TUI: left-click selects a tree row (or focuses the right pane) and the wheel scrolls whichever pane the cursor is over.
 
 ### Status icons
 
