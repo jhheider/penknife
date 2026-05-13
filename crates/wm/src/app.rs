@@ -48,9 +48,14 @@ pub enum Mode {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ConfirmAction {
     SyncDown,
+    DeleteRemote {
+        rel_path: String,
+        root: PathBuf,
+        gist_id: String,
+    },
 }
 
 pub struct App {
@@ -96,6 +101,15 @@ pub struct App {
 pub enum PaneFocus {
     Tree,
     Right,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct StatusCounts {
+    synced: usize,
+    local_newer: usize,
+    remote_newer: usize,
+    conflict: usize,
+    not_gisted: usize,
 }
 
 impl App {
@@ -294,21 +308,53 @@ impl App {
             self.status_message = format!("{} {} | {url}", status.icon(), rel);
         } else {
             self.status_color = Color::White;
-            let total = self.files.len();
-            let tracked = current_root
-                .as_ref()
-                .and_then(|r| self.store.files_for_root(r))
-                .map(|m| m.len())
-                .unwrap_or(0);
+            let counts = self.status_counts();
+            let g = crate::glyphs::glyphs();
             let root_label = current_root
                 .map(|r| r.display().to_string())
                 .unwrap_or_else(|| "(no root)".into());
-            let g = crate::glyphs::glyphs();
             self.status_message = format!(
-                "{total} files | {tracked} tracked | {} {root_label}",
-                g.root
+                "{} {root_label}  |  {} {}  {} {}  {} {}  {} {}  {} {}",
+                g.root,
+                g.status_synced,
+                counts.synced,
+                g.status_local_newer,
+                counts.local_newer,
+                g.status_remote_newer,
+                counts.remote_newer,
+                g.status_conflict,
+                counts.conflict,
+                g.status_not_gisted,
+                counts.not_gisted,
             );
         }
+    }
+
+    /// Tally the current set of files by sync status. Used by the status bar
+    /// dashboard and the jump-to-next-dirty navigation.
+    fn status_counts(&self) -> StatusCounts {
+        let mut c = StatusCounts::default();
+        let Some(root) = self.current_root() else {
+            c.not_gisted = self.files.len();
+            return c;
+        };
+        for file in &self.files {
+            let s = match self.store.get(root, &file.rel_path) {
+                Some(entry) => {
+                    let content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
+                    sync::local_status(&content, Some(entry))
+                }
+                None => sync::SyncStatus::NotGisted,
+            };
+            match s {
+                sync::SyncStatus::Synced => c.synced += 1,
+                sync::SyncStatus::LocalNewer => c.local_newer += 1,
+                sync::SyncStatus::RemoteNewer => c.remote_newer += 1,
+                sync::SyncStatus::Conflict => c.conflict += 1,
+                sync::SyncStatus::NotGisted => c.not_gisted += 1,
+            }
+        }
+        c
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -391,13 +437,15 @@ impl App {
         let Mode::Confirm { action, .. } = &self.mode else {
             return;
         };
-        // Snapshot the action so we can transition out of Confirm before invoking.
-        let action_copy = match action {
-            ConfirmAction::SyncDown => ConfirmAction::SyncDown,
-        };
+        let action_copy = action.clone();
         if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
             match action_copy {
                 ConfirmAction::SyncDown => self.do_sync_down(),
+                ConfirmAction::DeleteRemote {
+                    rel_path,
+                    root,
+                    gist_id,
+                } => self.do_delete_remote(rel_path, root, gist_id),
             }
         }
         self.mode = Mode::Normal;
@@ -606,6 +654,14 @@ impl App {
             KeyCode::Char('u') => self.do_sync_up(),
             KeyCode::Char('d') => self.confirm_sync_down(),
             KeyCode::Char('c') => self.do_copy_url(),
+            KeyCode::Char('o') => self.do_open_in_browser(),
+            KeyCode::Char('X') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.confirm_delete_remote();
+            }
+            KeyCode::Char('n') => self.jump_to_next_dirty(true),
+            KeyCode::Char('N') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.jump_to_next_dirty(false);
+            }
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_hydration();
@@ -768,6 +824,27 @@ impl App {
                     self.status_message = format!("Status check failed: {e}");
                 }
             },
+            AsyncEvent::DeleteDone {
+                root,
+                rel_path,
+                result,
+            } => match result {
+                Ok(()) => {
+                    if let Some(map) = self.store.roots.get_mut(&root) {
+                        map.remove(&rel_path);
+                    }
+                    if let Err(e) = self.store.save() {
+                        self.status_message = format!("Delete ok but store save failed: {e}");
+                        return;
+                    }
+                    self.status_message = format!("Deleted gist for {rel_path}");
+                    self.rebuild_tree();
+                    self.update_status();
+                }
+                Err(e) => {
+                    self.status_message = format!("Delete failed: {e}");
+                }
+            },
             AsyncEvent::GdocFetched(result) => match result {
                 Ok(content) => {
                     self.gdoc_content = Some(content);
@@ -868,6 +945,137 @@ impl App {
                 result: result.map_err(|e| e.to_string()),
             });
         });
+    }
+
+    fn do_open_in_browser(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            return;
+        };
+        let Some(entry) = self
+            .current_root()
+            .and_then(|r| self.store.get(r, &rel))
+            .cloned()
+        else {
+            self.status_message = "No gist mapped for this file.".into();
+            return;
+        };
+        match open::that(&entry.url) {
+            Ok(()) => self.status_message = format!("Opened {}", entry.url),
+            Err(e) => self.status_message = format!("Open failed: {e}"),
+        }
+    }
+
+    fn confirm_delete_remote(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            return;
+        };
+        let Some(root) = self.current_root().cloned() else {
+            return;
+        };
+        let Some(entry) = self.store.get(&root, &rel).cloned() else {
+            self.status_message = "No gist to delete.".into();
+            return;
+        };
+        self.mode = Mode::Confirm {
+            message: format!(
+                "Delete remote gist for {rel}? Local file is kept; mapping is removed."
+            ),
+            action: ConfirmAction::DeleteRemote {
+                rel_path: rel,
+                root,
+                gist_id: entry.gist_id,
+            },
+        };
+    }
+
+    fn do_delete_remote(&mut self, rel_path: String, root: PathBuf, gist_id: String) {
+        let Some(token) = self.token.clone() else {
+            self.status_message = "No GitHub token available.".into();
+            return;
+        };
+        let tx = self.async_tx.clone();
+        self.status_message = format!("Deleting gist for {rel_path}...");
+        self.spawn_tracked(async move {
+            let client = gist_rs::GistClient::new(token);
+            let result = client.delete(&gist_id).await.map_err(|e| e.to_string());
+            let _ = tx.send(AsyncEvent::DeleteDone {
+                root,
+                rel_path,
+                result,
+            });
+        });
+    }
+
+    /// Move the tree selection to the next file whose sync status is anything
+    /// other than `Synced`. `forward` controls direction. Wraps once.
+    fn jump_to_next_dirty(&mut self, forward: bool) {
+        let Some(root) = self.current_root().cloned() else {
+            return;
+        };
+        if self.files.is_empty() {
+            return;
+        }
+
+        // Find current position within the scanned-files list. If the current
+        // selection is a directory or nothing, start before the first file.
+        let current_id = self
+            .tree_state
+            .selected()
+            .last()
+            .cloned()
+            .unwrap_or_default();
+        let cur_idx = self
+            .files
+            .iter()
+            .position(|f| f.rel_path == current_id)
+            .map(|i| i as isize)
+            .unwrap_or(-1);
+
+        let n = self.files.len() as isize;
+        let mut next = None;
+        for step in 1..=n {
+            let probe = if forward {
+                ((cur_idx + step).rem_euclid(n)) as usize
+            } else {
+                ((cur_idx - step).rem_euclid(n)) as usize
+            };
+            let file = &self.files[probe];
+            let status = match self.store.get(&root, &file.rel_path) {
+                Some(entry) => {
+                    let content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
+                    sync::local_status(&content, Some(entry))
+                }
+                None => sync::SyncStatus::NotGisted,
+            };
+            if !matches!(status, sync::SyncStatus::Synced) {
+                next = Some(file.rel_path.clone());
+                break;
+            }
+        }
+
+        let Some(rel_path) = next else {
+            self.status_message = "No dirty files.".into();
+            return;
+        };
+
+        // Build the selection path by opening every ancestor directory.
+        let mut path = Vec::new();
+        let mut acc = String::new();
+        for part in rel_path.split('/') {
+            if !acc.is_empty() {
+                acc.push('/');
+            }
+            acc.push_str(part);
+            path.push(acc.clone());
+        }
+        self.tree_state.select(path.clone());
+        // Ensure all ancestor directories are open so the leaf is visible.
+        for ancestor in path.iter().take(path.len().saturating_sub(1)) {
+            self.tree_state.open(vec![ancestor.clone()]);
+        }
+        self.focused_pane = PaneFocus::Tree;
+        self.update_preview();
+        self.update_status();
     }
 
     fn do_copy_url(&mut self) {

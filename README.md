@@ -4,9 +4,11 @@ A terminal UI for managing local markdown files synced to GitHub Gists.
 
 ## Features
 
-- **Tree-based file browser** for one or more local writing directories
-- **Push / pull** local markdown files to/from gists; per-file sync status
+- **Tree-based file browser** for one or more local writing directories, arbitrarily nested
+- **Push / pull / delete** local markdown files to/from gists; per-file sync status with at-a-glance counts in the status bar
 - **Diff view** of local vs remote
+- **Open gist in browser** (`o`) and **copy gist URL** (`c`) for quick sharing
+- **Jump to next/previous dirty file** (`n` / `N`) for triage
 - **Hydration** — match existing gists to local files by filename + content hash, with an interactive resolver for ambiguous cases
 - **Multi-root** — switch between several configured directories from inside the app
 - **Search / filter** the file tree as you type
@@ -52,10 +54,13 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `Enter` `l` `→` | Normal (tree) | Expand directory / select file |
 | `h` `←` `Bksp` | Normal (tree) | Collapse directory |
 | `PgUp/PgDn` | Normal, Diff | Scroll preview/diff pane |
+| `n` / `N` | Normal | Jump to next / previous non-synced file |
 | `u` | Normal | Push selected file (create or update gist) |
 | `d` | Normal | Pull remote into selected file (with confirmation) |
 | `D` | Normal | Diff local vs remote |
 | `c` | Normal | Copy gist URL to clipboard (auto-pushes if not yet gisted) |
+| `o` | Normal | Open gist URL in the system browser |
+| `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
 | `H` | Normal | Hydrate — match existing gists to files |
 | `I` | Normal | Import a Google Doc as markdown |
 | `R` | Normal | Switch root directory |

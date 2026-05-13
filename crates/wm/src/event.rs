@@ -43,6 +43,12 @@ pub enum AsyncEvent {
     },
     /// Google Doc fetch result
     GdocFetched(std::result::Result<String, String>),
+    /// Remote gist deletion completed
+    DeleteDone {
+        root: PathBuf,
+        rel_path: String,
+        result: std::result::Result<(), String>,
+    },
 }
 
 /// User-input events from the terminal that the app cares about.

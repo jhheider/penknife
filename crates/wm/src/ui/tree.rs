@@ -16,116 +16,86 @@ pub struct BuiltTree<'a> {
     pub file_ids: HashSet<String>,
 }
 
-/// Build a hierarchical tree of items from scanned files.
+#[derive(Default)]
+struct Node<'a> {
+    /// Subdirectories keyed by component name, sorted alphabetically (BTreeMap).
+    children: BTreeMap<String, Node<'a>>,
+    /// Files directly under this directory, kept in insertion order so the
+    /// caller's sort (mtime desc, from scanner) survives the rebuild.
+    files: Vec<&'a ScannedFile>,
+}
+
+/// Build a hierarchical tree of items from scanned files. Supports arbitrary
+/// directory depth — components are walked recursively rather than truncated.
 pub fn build_tree<'a>(
     files: &[ScannedFile],
     store: &Store,
     root: Option<&Path>,
     filter: &str,
 ) -> BuiltTree<'a> {
-    // Group files by directory hierarchy
-    // e.g. "Game/rp-posts/file.md" → ["Game", "rp-posts", "file.md"]
-    let mut tree: BTreeMap<String, BTreeMap<String, Vec<&ScannedFile>>> = BTreeMap::new();
+    let filter_lc = filter.to_lowercase();
+    let mut root_node: Node = Node::default();
 
     for file in files {
-        if !filter.is_empty()
-            && !file
-                .rel_path
-                .to_lowercase()
-                .contains(&filter.to_lowercase())
-        {
+        if !filter.is_empty() && !file.rel_path.to_lowercase().contains(&filter_lc) {
             continue;
         }
-
-        let parts: Vec<&str> = file.rel_path.splitn(3, '/').collect();
-        match parts.len() {
-            1 => {
-                tree.entry("".to_string())
-                    .or_default()
-                    .entry("".to_string())
-                    .or_default()
-                    .push(file);
-            }
-            2 => {
-                tree.entry(parts[0].to_string())
-                    .or_default()
-                    .entry("".to_string())
-                    .or_default()
-                    .push(file);
-            }
-            3.. => {
-                tree.entry(parts[0].to_string())
-                    .or_default()
-                    .entry(parts[1].to_string())
-                    .or_default()
-                    .push(file);
-            }
-            _ => {}
+        let mut parts = file.rel_path.split('/').collect::<Vec<_>>();
+        // The final component is the file itself; the rest are directories.
+        let _name = parts.pop();
+        let mut cur = &mut root_node;
+        for dir in parts {
+            cur = cur.children.entry(dir.to_string()).or_default();
         }
+        cur.files.push(file);
     }
 
-    let mut items = Vec::new();
     let mut identifiers = Vec::new();
     let mut file_ids: HashSet<String> = HashSet::new();
-
-    for (game, subdirs) in &tree {
-        if game.is_empty() {
-            // Root-level files
-            for file in subdirs.values().flatten() {
-                let status = file_status(file, store, root);
-                let label = format_leaf(&file.rel_path, status);
-                let id = file.rel_path.clone();
-                identifiers.push(id.clone());
-                file_ids.insert(id.clone());
-                items.push(TreeItem::new_leaf(id, label));
-            }
-            continue;
-        }
-
-        let mut game_children = Vec::new();
-        let game_id = game.clone();
-
-        for (subdir, sub_files) in subdirs {
-            if subdir.is_empty() {
-                // Files directly under game
-                for file in sub_files {
-                    let status = file_status(file, store, root);
-                    let label = format_leaf(&file.rel_path, status);
-                    let id = file.rel_path.clone();
-                    identifiers.push(id.clone());
-                    file_ids.insert(id.clone());
-                    game_children.push(TreeItem::new_leaf(id, label));
-                }
-            } else {
-                let sub_id = format!("{game}/{subdir}");
-                let mut sub_children = Vec::new();
-                for file in sub_files {
-                    let status = file_status(file, store, root);
-                    let label = format_leaf(&file.rel_path, status);
-                    let id = file.rel_path.clone();
-                    identifiers.push(id.clone());
-                    file_ids.insert(id.clone());
-                    sub_children.push(TreeItem::new_leaf(id, label));
-                }
-                identifiers.push(sub_id.clone());
-                game_children.push(
-                    TreeItem::new(sub_id, format_directory(subdir), sub_children)
-                        .expect("tree item"),
-                );
-            }
-        }
-
-        identifiers.push(game_id.clone());
-        items.push(
-            TreeItem::new(game_id, format_directory(game), game_children).expect("tree item"),
-        );
-    }
+    let items = render_node(&root_node, "", store, root, &mut identifiers, &mut file_ids);
 
     BuiltTree {
         items,
         identifiers,
         file_ids,
     }
+}
+
+fn render_node<'a>(
+    node: &Node,
+    prefix: &str,
+    store: &Store,
+    root: Option<&Path>,
+    identifiers: &mut Vec<String>,
+    file_ids: &mut HashSet<String>,
+) -> Vec<TreeItem<'a, String>> {
+    let mut items = Vec::new();
+
+    // Directories first (sorted alphabetically thanks to BTreeMap).
+    for (name, child) in &node.children {
+        let dir_id = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let children = render_node(child, &dir_id, store, root, identifiers, file_ids);
+        identifiers.push(dir_id.clone());
+        items.push(
+            TreeItem::new(dir_id, format_directory(name), children).expect("unique tree item id"),
+        );
+    }
+
+    // Then files (preserve scanner-supplied order = mtime desc).
+    for file in &node.files {
+        let status = file_status(file, store, root);
+        let label = format_leaf(&file.rel_path, status);
+        let id = file.rel_path.clone();
+        identifiers.push(id.clone());
+        file_ids.insert(id.clone());
+        items.push(TreeItem::new_leaf(id, label));
+    }
+
+    items
 }
 
 fn file_status(file: &ScannedFile, store: &Store, root: Option<&Path>) -> SyncStatus {
@@ -161,4 +131,52 @@ fn format_directory(name: &str) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::SystemTime;
+
+    fn sf(rel: &str) -> ScannedFile {
+        ScannedFile {
+            rel_path: rel.to_string(),
+            abs_path: PathBuf::from(rel),
+            modified: SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn deep_paths_nest_recursively() {
+        let files = vec![sf("a/b/c/d.md"), sf("a/b/c/e.md"), sf("a/f.md")];
+        let store = Store::default();
+        let built = build_tree(&files, &store, None, "");
+        // Top-level should have exactly one directory entry ("a"); identifiers
+        // should include each directory level ("a", "a/b", "a/b/c").
+        assert_eq!(built.items.len(), 1);
+        assert!(built.identifiers.contains(&"a".to_string()));
+        assert!(built.identifiers.contains(&"a/b".to_string()));
+        assert!(built.identifiers.contains(&"a/b/c".to_string()));
+        assert!(built.file_ids.contains("a/b/c/d.md"));
+        assert!(built.file_ids.contains("a/f.md"));
+    }
+
+    #[test]
+    fn root_level_files_appear_at_top() {
+        let files = vec![sf("README.md"), sf("notes/today.md")];
+        let store = Store::default();
+        let built = build_tree(&files, &store, None, "");
+        assert!(built.file_ids.contains("README.md"));
+        assert!(built.file_ids.contains("notes/today.md"));
+    }
+
+    #[test]
+    fn filter_excludes_non_matching() {
+        let files = vec![sf("draft/post.md"), sf("publish/post.md")];
+        let store = Store::default();
+        let built = build_tree(&files, &store, None, "publish");
+        assert!(!built.file_ids.contains("draft/post.md"));
+        assert!(built.file_ids.contains("publish/post.md"));
+    }
 }

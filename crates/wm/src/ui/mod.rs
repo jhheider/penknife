@@ -10,6 +10,22 @@ use tui_tree_widget::Tree;
 
 use crate::app::{App, Mode, PaneFocus};
 
+/// Truncate a path for use as a pane title. Keeps the rightmost (most
+/// specific) part visible by ellipsizing the front when needed.
+fn truncate_path_for_title(path: &str, max: usize) -> String {
+    if max <= 1 || path.is_empty() {
+        return String::new();
+    }
+    if path.chars().count() <= max {
+        return path.to_string();
+    }
+    // Reserve room for the leading ellipsis.
+    let want = max.saturating_sub(1);
+    let tail: String = path.chars().rev().take(want).collect::<String>();
+    let tail: String = tail.chars().rev().collect();
+    format!("…{tail}")
+}
+
 /// Render the full UI.
 pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
@@ -52,10 +68,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     f.render_stateful_widget(tree_widget, panes[0], &mut app.tree_state);
 
-    // Right pane (preview or diff)
+    // Right pane (preview or diff). Titles are mode-prefixed and front-truncated
+    // so long rel_paths don't blow out the border.
+    let rel = app.selected_file().unwrap_or_default();
+    let max_title_width = panes[1].width.saturating_sub(12) as usize;
+    let trimmed = truncate_path_for_title(&rel, max_title_width);
     match &app.mode {
         Mode::Diff { local, remote } => {
-            let title = app.selected_file().unwrap_or_default();
+            let title = if trimmed.is_empty() {
+                "Diff".to_string()
+            } else {
+                format!("Diff · {trimmed}")
+            };
             diff::render_diff(
                 f,
                 panes[1],
@@ -67,7 +91,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             );
         }
         _ => {
-            let title = app.selected_file().unwrap_or_default();
+            let title = if trimmed.is_empty() {
+                "Preview".to_string()
+            } else {
+                format!("Preview · {trimmed}")
+            };
             preview::render_preview(
                 f,
                 panes[1],
@@ -128,5 +156,30 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             dialogs::render_resolve_ambiguous(f, f.area(), app, *item, *selected);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_path_for_title;
+
+    #[test]
+    fn short_paths_pass_through_unchanged() {
+        assert_eq!(truncate_path_for_title("a/b.md", 20), "a/b.md");
+    }
+
+    #[test]
+    fn long_paths_get_front_ellipsized() {
+        let out = truncate_path_for_title("very/long/path/to/file.md", 10);
+        assert_eq!(out.chars().count(), 10);
+        assert!(out.starts_with('…'));
+        assert!(out.ends_with("file.md"));
+    }
+
+    #[test]
+    fn empty_or_too_small_max_returns_empty() {
+        assert_eq!(truncate_path_for_title("", 10), "");
+        assert_eq!(truncate_path_for_title("anything", 0), "");
+        assert_eq!(truncate_path_for_title("anything", 1), "");
     }
 }

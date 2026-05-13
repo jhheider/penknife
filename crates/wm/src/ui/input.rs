@@ -12,13 +12,6 @@ impl LineEditor {
         Self::default()
     }
 
-    pub fn _with_content(content: &str) -> Self {
-        Self {
-            cursor: content.len(),
-            content: content.to_string(),
-        }
-    }
-
     /// Handle a key event. Returns true if the event was consumed.
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {

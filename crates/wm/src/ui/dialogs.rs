@@ -28,27 +28,32 @@ pub fn render_help(f: &mut Frame, area: Rect) {
     f.render_widget(Clear, modal);
 
     let help_text = "\
-Keybindings:
-
+Navigation
   Tab          Toggle focus: tree pane ↔ preview/diff pane
-  j/k/↑/↓     Navigate (focused pane)
-  Enter/l/→    Expand / select (tree pane only)
-  h/←/Bksp    Collapse (tree pane only)
-  PgUp/PgDn   Scroll preview/diff pane (any focus)
+  j/k/↑/↓     Navigate the focused pane
+  Enter/l/→    Expand / select (tree pane)
+  h/←/Bksp    Collapse (tree pane)
+  PgUp/PgDn   Scroll preview/diff (any focus)
+  n / N        Jump to next / previous non-synced file
 
+Gist actions
   u            Push selected file to gist
   d            Pull remote into selected file
-  c            Copy URL to clipboard
-  D            Diff view
-  H            Hydrate (match gists to files)
-  /            Search / filter
-  I            Google Doc import
+  c            Copy gist URL to clipboard
+  o            Open gist URL in browser
+  X            Delete remote gist (keeps local file)
+  D            Diff local vs remote
+  H            Hydrate — match existing gists to files
+
+Files & roots
+  /            Search / filter tree
+  I            Import a Google Doc as markdown
   R            Switch root directory
   r            Refresh file tree
   ?            This help
   q            Quit
 
-In Diff view: j/k, arrows, PgUp/PgDn scroll; Esc/q or any other key exits.
+In Diff view: j/k, arrows, PgUp/PgDn scroll; Esc/q exits.
 
 Mouse: cmd-click on URLs and native selection work by default.
 Set WM_MOUSE=1 to enable wheel-scroll routing instead.
