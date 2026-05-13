@@ -41,6 +41,7 @@ Gist actions
   d            Pull remote into selected file
   c            Copy gist URL to clipboard
   o            Open gist URL in browser
+  e            Edit selected file in $EDITOR
   X            Delete remote gist (keeps local file)
   D            Diff local vs remote
   H            Hydrate — match existing gists to files

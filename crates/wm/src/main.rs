@@ -64,6 +64,10 @@ async fn main() -> color_eyre::Result<()> {
             app.handle_async_event(event);
         }
 
+        if let Some(path) = app.pending_editor.take() {
+            suspend_and_edit(&mut terminal, &mut app, &path)?;
+        }
+
         if app.should_quit {
             break;
         }
@@ -76,6 +80,55 @@ async fn main() -> color_eyre::Result<()> {
     }
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
+
+    Ok(())
+}
+
+/// Suspend the TUI (leave alt screen, drop raw mode, release mouse capture),
+/// spawn `$EDITOR` synchronously on the given path, then re-enter the TUI
+/// and force a redraw. Refreshes the file list afterward so any external
+/// edits show up in the tree and preview.
+fn suspend_and_edit(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    path: &std::path::Path,
+) -> color_eyre::Result<()> {
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+
+    let had_mouse = app.mouse_capture;
+    if had_mouse {
+        let _ = io::stdout().execute(DisableMouseCapture);
+    }
+    disable_raw_mode()?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+
+    let status = std::process::Command::new(&editor).arg(path).status();
+
+    enable_raw_mode()?;
+    io::stdout().execute(EnterAlternateScreen)?;
+    if had_mouse {
+        let _ = io::stdout().execute(EnableMouseCapture);
+    }
+    terminal.clear()?;
+
+    match status {
+        Ok(s) if s.success() => {
+            if let Err(e) = app.refresh_files() {
+                app.status_message = format!("Refresh after edit failed: {e}");
+            } else {
+                app.status_message = format!("Returned from {editor}.");
+            }
+            app.update_status();
+        }
+        Ok(s) => {
+            app.status_message = format!("{editor} exited with status {s}");
+        }
+        Err(e) => {
+            app.status_message = format!("Failed to launch {editor}: {e}");
+        }
+    }
 
     Ok(())
 }

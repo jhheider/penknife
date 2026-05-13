@@ -52,9 +52,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     } else {
         Color::DarkGray
     };
+    let title = if app.search_filter.is_empty() {
+        format!("{} Files ({})", g.file_pane, app.files.len())
+    } else {
+        let shown = app.tree_file_ids.len();
+        format!(
+            "{} Files ({}/{}) /{}",
+            g.file_pane,
+            shown,
+            app.files.len(),
+            app.search_filter
+        )
+    };
     let tree_block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("{} Files", g.file_pane))
+        .title(title)
         .border_style(Style::default().fg(tree_border))
         .title_style(
             Style::default()

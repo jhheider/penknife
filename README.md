@@ -60,6 +60,7 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `D` | Normal | Diff local vs remote |
 | `c` | Normal | Copy gist URL to clipboard (auto-pushes if not yet gisted) |
 | `o` | Normal | Open gist URL in the system browser |
+| `e` | Normal | Edit selected file in `$EDITOR` (TUI suspends, then refreshes) |
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
 | `H` | Normal | Hydrate — match existing gists to files |
 | `I` | Normal | Import a Google Doc as markdown |

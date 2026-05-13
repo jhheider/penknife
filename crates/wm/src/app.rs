@@ -95,6 +95,9 @@ pub struct App {
     pub mouse_capture: bool,
     /// Outstanding spawned tokio tasks; aborted on quit.
     pub tasks: Vec<JoinHandle<()>>,
+    /// If set, main.rs should suspend the TUI, spawn `$EDITOR` on this file,
+    /// then resume. Cleared by the main loop before each editor invocation.
+    pub pending_editor: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,6 +163,7 @@ impl App {
             focused_pane: PaneFocus::Tree,
             mouse_capture: false,
             tasks: Vec::new(),
+            pending_editor: None,
         };
         app.rebuild_tree();
         app.update_status();
@@ -307,8 +311,18 @@ impl App {
             let url = entry.as_ref().map(|e| e.url.as_str()).unwrap_or("no gist");
             self.status_message = format!("{} {} | {url}", status.icon(), rel);
         } else {
-            self.status_color = Color::White;
             let counts = self.status_counts();
+            self.status_color = if counts.conflict > 0 {
+                Color::Red
+            } else if counts.local_newer > 0 {
+                Color::Yellow
+            } else if counts.remote_newer > 0 {
+                Color::Blue
+            } else if counts.not_gisted > 0 {
+                Color::DarkGray
+            } else {
+                Color::Green
+            };
             let g = crate::glyphs::glyphs();
             let root_label = current_root
                 .map(|r| r.display().to_string())
@@ -654,6 +668,7 @@ impl App {
             KeyCode::Char('u') => self.do_sync_up(),
             KeyCode::Char('d') => self.confirm_sync_down(),
             KeyCode::Char('c') => self.do_copy_url(),
+            KeyCode::Char('e') => self.do_request_edit(),
             KeyCode::Char('o') => self.do_open_in_browser(),
             KeyCode::Char('X') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.confirm_delete_remote();
@@ -945,6 +960,18 @@ impl App {
                 result: result.map_err(|e| e.to_string()),
             });
         });
+    }
+
+    fn do_request_edit(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            return;
+        };
+        let path = self.abs_path(&rel);
+        if !path.is_file() {
+            self.status_message = format!("Not a file: {}", path.display());
+            return;
+        }
+        self.pending_editor = Some(path);
     }
 
     fn do_open_in_browser(&mut self) {
