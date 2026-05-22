@@ -27,19 +27,10 @@ struct Node<'a> {
 
 /// Build a hierarchical tree of items from scanned files. Supports arbitrary
 /// directory depth — components are walked recursively rather than truncated.
-pub fn build_tree<'a>(
-    files: &[ScannedFile],
-    store: &Store,
-    root: Option<&Path>,
-    filter: &str,
-) -> BuiltTree<'a> {
-    let filter_lc = filter.to_lowercase();
+pub fn build_tree<'a>(files: &[ScannedFile], store: &Store, root: Option<&Path>) -> BuiltTree<'a> {
     let mut root_node: Node = Node::default();
 
     for file in files {
-        if !filter.is_empty() && !file.rel_path.to_lowercase().contains(&filter_lc) {
-            continue;
-        }
         let mut parts = file.rel_path.split('/').collect::<Vec<_>>();
         // The final component is the file itself; the rest are directories.
         let _name = parts.pop();
@@ -151,7 +142,7 @@ mod tests {
     fn deep_paths_nest_recursively() {
         let files = vec![sf("a/b/c/d.md"), sf("a/b/c/e.md"), sf("a/f.md")];
         let store = Store::default();
-        let built = build_tree(&files, &store, None, "");
+        let built = build_tree(&files, &store, None);
         // Top-level should have exactly one directory entry ("a"); identifiers
         // should include each directory level ("a", "a/b", "a/b/c").
         assert_eq!(built.items.len(), 1);
@@ -166,17 +157,8 @@ mod tests {
     fn root_level_files_appear_at_top() {
         let files = vec![sf("README.md"), sf("notes/today.md")];
         let store = Store::default();
-        let built = build_tree(&files, &store, None, "");
+        let built = build_tree(&files, &store, None);
         assert!(built.file_ids.contains("README.md"));
         assert!(built.file_ids.contains("notes/today.md"));
-    }
-
-    #[test]
-    fn filter_excludes_non_matching() {
-        let files = vec![sf("draft/post.md"), sf("publish/post.md")];
-        let store = Store::default();
-        let built = build_tree(&files, &store, None, "publish");
-        assert!(!built.file_ids.contains("draft/post.md"));
-        assert!(built.file_ids.contains("publish/post.md"));
     }
 }

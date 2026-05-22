@@ -21,7 +21,9 @@ use crate::ui::tree;
 pub enum Mode {
     Normal,
     Help,
-    Search,
+    FilePicker {
+        selected: usize,
+    },
     Diff {
         local: String,
         remote: String,
@@ -70,8 +72,9 @@ pub struct App {
     pub preview_content: String,
     pub status_message: String,
     pub status_color: Color,
-    pub search_editor: LineEditor,
-    pub search_filter: String,
+    pub picker_editor: LineEditor,
+    pub picker: crate::picker::Picker,
+    pub picker_matches: Vec<crate::picker::PickerMatch>,
     pub input_editor: LineEditor,
     pub gdoc_content: Option<String>,
     pub should_quit: bool,
@@ -146,8 +149,9 @@ impl App {
             preview_content: String::new(),
             status_message: String::new(),
             status_color: Color::White,
-            search_editor: LineEditor::new(),
-            search_filter: String::new(),
+            picker_editor: LineEditor::new(),
+            picker: crate::picker::Picker::new(),
+            picker_matches: Vec::new(),
             input_editor: LineEditor::new(),
             gdoc_content: None,
             should_quit: false,
@@ -195,12 +199,7 @@ impl App {
 
     pub fn rebuild_tree(&mut self) {
         let root = self.config.roots.get(self.active_root);
-        let built = tree::build_tree(
-            &self.files,
-            &self.store,
-            root.map(|r| r.as_path()),
-            &self.search_filter,
-        );
+        let built = tree::build_tree(&self.files, &self.store, root.map(|r| r.as_path()));
         self.tree_items = built.items;
         self.tree_identifiers = built.identifiers;
         self.tree_file_ids = built.file_ids;
@@ -396,7 +395,7 @@ impl App {
             Mode::Help | Mode::Message(_) => {
                 self.mode = Mode::Normal;
             }
-            Mode::Search => self.handle_search_key(key),
+            Mode::FilePicker { .. } => self.handle_picker_key(key),
             Mode::GdocUrl => self.handle_gdoc_url_key(key),
             Mode::GdocFilename => self.handle_gdoc_filename_key(key),
             Mode::Confirm { .. } => self.handle_confirm_key(key),
@@ -421,24 +420,72 @@ impl App {
         }
     }
 
-    fn handle_search_key(&mut self, key: KeyEvent) {
+    fn handle_picker_key(&mut self, key: KeyEvent) {
+        let Mode::FilePicker { selected } = self.mode else {
+            return;
+        };
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                self.search_filter.clear();
-                self.rebuild_tree();
             }
             KeyCode::Enter => {
-                self.search_filter = self.search_editor.content.clone();
-                self.mode = Mode::Normal;
-                self.rebuild_tree();
+                if let Some(m) = self.picker_matches.get(selected) {
+                    let rel_path = m.rel_path.clone();
+                    self.mode = Mode::Normal;
+                    self.jump_to(&rel_path);
+                } else {
+                    self.mode = Mode::Normal;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let max = self.picker_matches.len().saturating_sub(1);
+                self.mode = Mode::FilePicker {
+                    selected: (selected + 1).min(max),
+                };
+            }
+            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.mode = Mode::FilePicker {
+                    selected: selected.saturating_sub(1),
+                };
             }
             _ => {
-                self.search_editor.handle_key(key);
-                self.search_filter = self.search_editor.content.clone();
-                self.rebuild_tree();
+                if self.picker_editor.handle_key(key) {
+                    self.refresh_picker();
+                }
             }
         }
+    }
+
+    /// Re-rank `self.files` against the picker editor's current content and
+    /// clamp the selection cursor.
+    fn refresh_picker(&mut self) {
+        let query = self.picker_editor.content.clone();
+        self.picker_matches = self.picker.rank(&self.files, &query);
+        let max = self.picker_matches.len().saturating_sub(1);
+        if let Mode::FilePicker { selected } = &mut self.mode {
+            *selected = (*selected).min(max);
+        }
+    }
+
+    /// Select the given rel_path in the tree, expanding ancestor directories
+    /// so the leaf is visible. Also focuses the tree pane.
+    fn jump_to(&mut self, rel_path: &str) {
+        let mut path = Vec::new();
+        let mut acc = String::new();
+        for part in rel_path.split('/') {
+            if !acc.is_empty() {
+                acc.push('/');
+            }
+            acc.push_str(part);
+            path.push(acc.clone());
+        }
+        self.tree_state.select(path.clone());
+        for ancestor in path.iter().take(path.len().saturating_sub(1)) {
+            self.tree_state.open(vec![ancestor.clone()]);
+        }
+        self.focused_pane = PaneFocus::Tree;
+        self.update_preview();
+        self.update_status();
     }
 
     fn handle_gdoc_url_key(&mut self, key: KeyEvent) {
@@ -660,8 +707,9 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('/') => {
-                self.search_editor = LineEditor::new();
-                self.mode = Mode::Search;
+                self.picker_editor = LineEditor::new();
+                self.mode = Mode::FilePicker { selected: 0 };
+                self.refresh_picker();
             }
             KeyCode::Tab => {
                 self.focused_pane = match self.focused_pane {
@@ -1104,25 +1152,7 @@ impl App {
             self.status_message = "No dirty files.".into();
             return;
         };
-
-        // Build the selection path by opening every ancestor directory.
-        let mut path = Vec::new();
-        let mut acc = String::new();
-        for part in rel_path.split('/') {
-            if !acc.is_empty() {
-                acc.push('/');
-            }
-            acc.push_str(part);
-            path.push(acc.clone());
-        }
-        self.tree_state.select(path.clone());
-        // Ensure all ancestor directories are open so the leaf is visible.
-        for ancestor in path.iter().take(path.len().saturating_sub(1)) {
-            self.tree_state.open(vec![ancestor.clone()]);
-        }
-        self.focused_pane = PaneFocus::Tree;
-        self.update_preview();
-        self.update_status();
+        self.jump_to(&rel_path);
     }
 
     fn do_copy_url(&mut self) {

@@ -17,6 +17,7 @@ sha2 = "0.11"
 similar = "3"
 arboard = "3"
 open = "5"
+nucleo-matcher = "0.3"
 chrono = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 color-eyre = "0.6"

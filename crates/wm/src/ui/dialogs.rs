@@ -47,7 +47,7 @@ Gist actions
   H            Hydrate — match existing gists to files
 
 Files & roots
-  /            Search / filter tree
+  /            Fuzzy file picker (fzf-style)
   I            Import a Google Doc as markdown
   R            Switch root directory
   r            Refresh file tree
@@ -77,24 +77,107 @@ Press any key to close.";
     f.render_widget(para, modal);
 }
 
-/// Render the search input dialog.
-pub fn render_search(f: &mut Frame, area: Rect, editor: &LineEditor) {
-    let modal = modal_area(area, 50, 10);
+/// Render the fzf-style file picker overlay. Top row is the query input;
+/// the rest is a ranked list of matching paths with the matched characters
+/// highlighted. Selected row is inverted.
+pub fn render_file_picker(f: &mut Frame, area: Rect, app: &App, selected: usize) {
+    let modal = modal_area(area, 75, 70);
     f.render_widget(Clear, modal);
 
-    let text = format!("/{}", editor.content);
     let g = crate::glyphs::glyphs();
+    let total = app.files.len();
+    let shown = app.picker_matches.len();
+    let title = format!("{} Find file  ({shown}/{total})", g.search);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("{} Search", g.search))
+        .title(title)
         .border_style(Style::default().fg(Color::Yellow))
         .title_style(
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         );
-    let para = Paragraph::new(text).block(block);
-    f.render_widget(para, modal);
+    let inner = block.inner(modal);
+    f.render_widget(block, modal);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1), // query line
+        Constraint::Length(1), // separator
+        Constraint::Min(1),    // results
+        Constraint::Length(1), // hints
+    ])
+    .split(inner);
+
+    // Query line
+    let query = Line::from(vec![
+        Span::styled(
+            "> ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(app.picker_editor.content.clone()),
+    ]);
+    f.render_widget(Paragraph::new(query), chunks[0]);
+
+    // Visible window: clamp `selected` into a scrolling viewport that keeps
+    // the cursor in view without bouncing.
+    let view_h = chunks[2].height as usize;
+    let start = if view_h == 0 {
+        0
+    } else if selected >= view_h {
+        selected + 1 - view_h
+    } else {
+        0
+    };
+    let end = (start + view_h).min(app.picker_matches.len());
+
+    let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
+    for (i, m) in app.picker_matches[start..end].iter().enumerate() {
+        let row_idx = start + i;
+        let is_selected = row_idx == selected;
+        let row_style = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let marker = if is_selected { "▶ " } else { "  " };
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        spans.push(Span::styled(marker, row_style));
+        // Render rel_path char-by-char, highlighting indices that nucleo
+        // identified as match positions.
+        let mut idx_iter = m.indices.iter().copied().peekable();
+        for (pos, ch) in m.rel_path.chars().enumerate() {
+            let highlighted = matches!(idx_iter.peek(), Some(&p) if p as usize == pos);
+            if highlighted {
+                idx_iter.next();
+            }
+            let style = match (is_selected, highlighted) {
+                (true, true) => row_style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                (true, false) => row_style,
+                (false, true) => Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+                (false, false) => Style::default(),
+            };
+            spans.push(Span::styled(ch.to_string(), style));
+        }
+        lines.push(Line::from(spans));
+    }
+    if lines.is_empty() {
+        lines.push(Line::styled(
+            "  (no matches)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    f.render_widget(Paragraph::new(lines), chunks[2]);
+
+    // Hint footer
+    let hints = Line::styled(
+        "↑/↓ or Ctrl-n/p select · Enter open · Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    );
+    f.render_widget(Paragraph::new(hints), chunks[3]);
 }
 
 /// Render a text input dialog with a prompt.

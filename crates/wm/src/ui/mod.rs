@@ -52,18 +52,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     } else {
         Color::DarkGray
     };
-    let title = if app.search_filter.is_empty() {
-        format!("{} Files ({})", g.file_pane, app.files.len())
-    } else {
-        let shown = app.tree_file_ids.len();
-        format!(
-            "{} Files ({}/{}) /{}",
-            g.file_pane,
-            shown,
-            app.files.len(),
-            app.search_filter
-        )
-    };
+    let title = format!("{} Files ({})", g.file_pane, app.files.len());
     let tree_block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -128,7 +117,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Modal overlays
     match &app.mode {
         Mode::Help => dialogs::render_help(f, f.area()),
-        Mode::Search => dialogs::render_search(f, f.area(), &app.search_editor),
+        Mode::FilePicker { selected } => {
+            dialogs::render_file_picker(f, f.area(), app, *selected);
+        }
         Mode::Confirm { message, .. } => {
             dialogs::render_confirm(f, f.area(), message);
         }

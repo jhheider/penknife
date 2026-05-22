@@ -5,6 +5,7 @@ mod event;
 mod gdoc;
 mod glyphs;
 mod hydrate;
+mod picker;
 mod scanner;
 mod store;
 mod sync;

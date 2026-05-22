@@ -11,7 +11,7 @@ A terminal UI for managing local markdown files synced to GitHub Gists.
 - **Jump to next/previous dirty file** (`n` / `N`) for triage
 - **Hydration** — match existing gists to local files by filename + content hash, with an interactive resolver for ambiguous cases
 - **Multi-root** — switch between several configured directories from inside the app
-- **Search / filter** the file tree as you type
+- **Fuzzy file picker** (`/`) — fzf-style modal with smartcase matching and inline highlights, powered by [nucleo](https://crates.io/crates/nucleo-matcher)
 - **Markdown preview** with syntax highlighting (headings, code blocks, inline code, bold, italic, lists, blockquotes)
 - **Google Doc import** — fetch a public Google Doc and save it as markdown under any tree
 - **Atomic on-disk state** with retry/backoff and rate-limit awareness for the GitHub API
@@ -66,7 +66,8 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `I` | Normal | Import a Google Doc as markdown |
 | `R` | Normal | Switch root directory |
 | `r` | Normal | Refresh the tree |
-| `/` | Normal | Search / filter |
+| `/` | Normal | Fuzzy file picker (fzf-style) |
+| `↑/↓` `Ctrl-p/n` `Enter` `Esc` | Picker | Navigate / open / cancel |
 | `?` | Normal | Help |
 | `q` | Normal | Quit |
 | `j/k` `↑/↓` `PgUp/PgDn` | Diff | Scroll the diff |
