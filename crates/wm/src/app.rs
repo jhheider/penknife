@@ -467,22 +467,30 @@ impl App {
         }
     }
 
-    /// Select the given rel_path in the tree, expanding ancestor directories
-    /// so the leaf is visible. Also focuses the tree pane.
+    /// Select the given rel_path in the tree, expanding *every* ancestor
+    /// directory so the leaf is visible. Also focuses the tree pane.
+    ///
+    /// Note: tui-tree-widget's `open()` and `select()` both take the *full
+    /// path from root* to the target node, not just the target's own id.
+    /// Passing a single-element vec only worked for top-level entries.
     fn jump_to(&mut self, rel_path: &str) {
-        let mut path = Vec::new();
+        // Cumulative identifiers, one per depth level:
+        //   "a/b/c/d.md" → ["a", "a/b", "a/b/c", "a/b/c/d.md"]
+        let mut full_path: Vec<String> = Vec::new();
         let mut acc = String::new();
         for part in rel_path.split('/') {
             if !acc.is_empty() {
                 acc.push('/');
             }
             acc.push_str(part);
-            path.push(acc.clone());
+            full_path.push(acc.clone());
         }
-        self.tree_state.select(path.clone());
-        for ancestor in path.iter().take(path.len().saturating_sub(1)) {
-            self.tree_state.open(vec![ancestor.clone()]);
+        // Open each ancestor with the full path leading to it.
+        for depth in 1..full_path.len() {
+            self.tree_state.open(full_path[..depth].to_vec());
         }
+        self.tree_state.select(full_path);
+        self.tree_state.scroll_selected_into_view();
         self.focused_pane = PaneFocus::Tree;
         self.update_preview();
         self.update_status();
