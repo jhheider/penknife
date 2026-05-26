@@ -49,6 +49,14 @@ pub enum AsyncEvent {
         rel_path: String,
         result: std::result::Result<(), String>,
     },
+    /// Remote gist filename update (companion to a local rename) completed.
+    /// `rel_path` here is the new rel_path (for the status message);
+    /// the local store + filesystem are already updated by the time this
+    /// event fires, so we don't need the root.
+    RenameRemoteDone {
+        rel_path: String,
+        result: std::result::Result<(), String>,
+    },
 }
 
 /// User-input events from the terminal that the app cares about.

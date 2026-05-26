@@ -1,11 +1,15 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-/// Render a markdown file preview with basic syntax highlighting.
+/// Render a file preview. Dispatches on extension: `.json` gets pretty-
+/// printed + token-highlighted; everything else (including `.md`) goes
+/// through the markdown highlighter, which degrades to plain text on
+/// non-markdown content.
 pub fn render_preview(
     f: &mut Frame,
     area: Rect,
     content: &str,
+    ext: &str,
     title: Line<'static>,
     scroll: u16,
     focused: bool,
@@ -20,7 +24,10 @@ pub fn render_preview(
         .title(title)
         .border_style(Style::default().fg(border));
 
-    let lines = highlight(content);
+    let lines = match ext {
+        "json" => highlight_json(content),
+        _ => highlight(content),
+    };
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -28,6 +35,120 @@ pub fn render_preview(
         .scroll((scroll, 0));
 
     f.render_widget(paragraph, area);
+}
+
+/// Pretty-print + syntax-highlight a JSON document. If the content doesn't
+/// parse, falls back to rendering the raw text in a dimmed style so the
+/// user sees *something* instead of an opaque error.
+fn highlight_json(content: &str) -> Vec<Line<'static>> {
+    let pretty = match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_else(|_| content.to_string()),
+        Err(_) => {
+            // Not valid JSON — show raw with a dim banner up top.
+            let mut out = vec![Line::styled(
+                "(invalid JSON — showing raw)".to_string(),
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::ITALIC),
+            )];
+            out.extend(content.lines().map(|l| Line::raw(l.to_string())));
+            return out;
+        }
+    };
+    pretty.lines().map(highlight_json_line).collect()
+}
+
+/// Token-color a single line of (already pretty-printed) JSON.
+/// Keys → cyan, string values → green, numbers → yellow, true/false/null
+/// → magenta, structural punctuation → dim gray. The "is this a key?" test
+/// peeks past any whitespace for a following colon.
+fn highlight_json_line(line: &str) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'"' {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'"' {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if i < bytes.len() {
+                i += 1; // include closing quote
+            }
+            // Peek for the next non-whitespace char — colon means this
+            // is an object key, anything else means it's a string value.
+            let mut j = i;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            let is_key = j < bytes.len() && bytes[j] == b':';
+            let style = if is_key {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+            spans.push(Span::styled(line[start..i].to_string(), style));
+        } else if c.is_ascii_digit()
+            || (c == b'-' && bytes.get(i + 1).is_some_and(|n| n.is_ascii_digit()))
+        {
+            let start = i;
+            i += 1;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_digit()
+                    || matches!(bytes[i], b'.' | b'e' | b'E' | b'+' | b'-'))
+            {
+                i += 1;
+            }
+            spans.push(Span::styled(
+                line[start..i].to_string(),
+                Style::default().fg(Color::Yellow),
+            ));
+        } else if line[i..].starts_with("true") {
+            spans.push(Span::styled(
+                "true".to_string(),
+                Style::default().fg(Color::Magenta),
+            ));
+            i += 4;
+        } else if line[i..].starts_with("false") {
+            spans.push(Span::styled(
+                "false".to_string(),
+                Style::default().fg(Color::Magenta),
+            ));
+            i += 5;
+        } else if line[i..].starts_with("null") {
+            spans.push(Span::styled(
+                "null".to_string(),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::ITALIC),
+            ));
+            i += 4;
+        } else if matches!(c, b'{' | b'}' | b'[' | b']' | b',' | b':') {
+            spans.push(Span::styled(
+                (c as char).to_string(),
+                Style::default().fg(Color::DarkGray),
+            ));
+            i += 1;
+        } else {
+            // Advance one full utf-8 code point (whitespace, mostly).
+            let ch_end = line[i..]
+                .char_indices()
+                .nth(1)
+                .map(|(j, _)| i + j)
+                .unwrap_or(line.len());
+            spans.push(Span::raw(line[i..ch_end].to_string()));
+            i = ch_end;
+        }
+    }
+    Line::from(spans)
 }
 
 /// Highlight a full markdown document. Tracks code-block state across lines
@@ -610,6 +731,36 @@ mod tests {
             let t: String = lines[i].spans.iter().map(|s| s.content.as_ref()).collect();
             assert!(t.starts_with('├') && t.ends_with('┤'), "row {i}: {t:?}");
         }
+    }
+
+    #[test]
+    fn json_highlight_pretty_prints_valid_input() {
+        // Minified input should come back across multiple lines.
+        let lines = highlight_json(r#"{"name":"Goblin","hp":7,"alive":true}"#);
+        assert!(lines.len() >= 3, "expected multi-line pretty output");
+    }
+
+    #[test]
+    fn json_highlight_keys_and_strings_get_different_styles() {
+        // "k": "v" — first quoted token is a key (cyan), second is a value (green).
+        let line = highlight_json_line(r#"  "name": "Goblin","#);
+        let styled: Vec<_> = line
+            .spans
+            .iter()
+            .filter(|s| s.content.starts_with('"'))
+            .collect();
+        assert_eq!(styled.len(), 2);
+        // Just assert the two quoted spans have different fg colors.
+        assert_ne!(styled[0].style.fg, styled[1].style.fg);
+    }
+
+    #[test]
+    fn json_highlight_invalid_input_falls_back_to_raw() {
+        let lines = highlight_json("not { valid json");
+        // First line is the warning banner; rest are the raw content.
+        assert!(lines.len() >= 2);
+        let first: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(first.contains("invalid JSON"));
     }
 
     #[test]

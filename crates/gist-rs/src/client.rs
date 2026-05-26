@@ -161,6 +161,24 @@ impl GistClient {
         check_response(resp).await
     }
 
+    /// Rename a file within a gist. GitHub's PATCH /gists/:id endpoint
+    /// accepts a `{"files": {"<old>": {"filename": "<new>"}}}` shape — note
+    /// the old name is the map *key*, the new name is in the value.
+    pub async fn rename_file(&self, id: &str, old_name: &str, new_name: &str) -> Result<Gist> {
+        let body = serde_json::json!({
+            "files": {
+                old_name: { "filename": new_name }
+            }
+        });
+        let url = format!("{API_BASE}/gists/{id}");
+        let resp = self
+            .request(reqwest::Method::PATCH, &url)
+            .json(&body)
+            .send()
+            .await?;
+        check_response(resp).await
+    }
+
     /// Delete a gist.
     pub async fn delete(&self, id: &str) -> Result<()> {
         let url = format!("{API_BASE}/gists/{id}");

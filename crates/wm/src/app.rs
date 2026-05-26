@@ -58,6 +58,11 @@ pub enum Mode {
     ReplaceReview {
         selected: usize,
     },
+    /// Rename / move the selected file. The input editor is pre-filled with
+    /// the current rel_path; Enter commits, Esc cancels.
+    Rename {
+        old_rel: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -153,7 +158,7 @@ struct StatusCounts {
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
-    'H', 'r', 'R', 'I', 's',
+    'H', 'r', 'R', 'I', 's', 'm',
 ];
 
 impl App {
@@ -580,6 +585,7 @@ impl App {
             Mode::ReplaceQuery => self.handle_replace_query_key(key),
             Mode::ReplaceTarget => self.handle_replace_target_key(key),
             Mode::ReplaceReview { .. } => self.handle_replace_review_key(key),
+            Mode::Rename { .. } => self.handle_rename_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -951,6 +957,7 @@ impl App {
             }
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
             KeyCode::Char('_') => self.confirm_trash_local(),
+            KeyCode::Char('m') => self.start_rename(),
             KeyCode::Char('s') => self.start_replace(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_hydration();
@@ -1140,6 +1147,14 @@ impl App {
                 }
                 Err(e) => {
                     self.status_message = format!("Delete failed: {e}");
+                }
+            },
+            AsyncEvent::RenameRemoteDone { rel_path, result } => match result {
+                Ok(()) => {
+                    self.status_message = format!("Renamed (local + remote): {rel_path}");
+                }
+                Err(e) => {
+                    self.status_message = format!("Renamed locally; remote rename failed: {e}");
                 }
             },
             AsyncEvent::GdocFetched(result) => match result {
@@ -1352,6 +1367,136 @@ impl App {
             Err(e) => {
                 self.status_message = format!("Trash failed: {e}");
             }
+        }
+    }
+
+    // ── Rename / move ───────────────────────────────────────────────────────
+
+    fn start_rename(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            self.status_message = "No file selected.".into();
+            return;
+        };
+        self.input_editor = LineEditor::new();
+        self.input_editor.content = rel.clone();
+        self.input_editor.cursor = self.input_editor.content.len();
+        self.mode = Mode::Rename { old_rel: rel };
+    }
+
+    fn handle_rename_key(&mut self, key: KeyEvent) {
+        let Mode::Rename { old_rel } = &self.mode else {
+            return;
+        };
+        let old_rel = old_rel.clone();
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                let new_rel = self.input_editor.content.trim().to_string();
+                self.mode = Mode::Normal;
+                self.do_rename(old_rel, new_rel);
+            }
+            _ => {
+                self.input_editor.handle_key(key);
+            }
+        }
+    }
+
+    /// Carry out the rename: validate, move on disk, update the store key,
+    /// and (if mapped) kick off the remote gist filename update.
+    fn do_rename(&mut self, old_rel: String, new_rel: String) {
+        if new_rel.is_empty() {
+            self.status_message = "Empty filename — rename cancelled.".into();
+            return;
+        }
+        if new_rel == old_rel {
+            self.status_message = "No change — rename cancelled.".into();
+            return;
+        }
+        // Disallow absolute paths or backtracking — rename stays under the root.
+        if new_rel.starts_with('/') || new_rel.split('/').any(|c| c == "..") {
+            self.status_message =
+                "New name must be a relative path under the root (no .. or leading /).".into();
+            return;
+        }
+        let Some(root) = self.current_root().cloned() else {
+            self.status_message = "No root.".into();
+            return;
+        };
+        let old_abs = root.join(&old_rel);
+        let new_abs = root.join(&new_rel);
+        if new_abs.exists() {
+            self.status_message = format!("Target exists: {new_rel}");
+            return;
+        }
+        if let Some(parent) = new_abs.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.status_message = format!("mkdir failed: {e}");
+            return;
+        }
+        if let Err(e) = std::fs::rename(&old_abs, &new_abs) {
+            self.status_message = format!("Rename failed: {e}");
+            return;
+        }
+
+        // Update store: move the entry under the new rel_path.
+        let entry = self.store.get(&root, &old_rel).cloned();
+        if let Some(entry) = &entry {
+            self.store.remove(&root, &old_rel);
+            self.store.insert(&root, new_rel.clone(), entry.clone());
+            if let Err(e) = self.store.save() {
+                self.status_message = format!("Renamed locally; store save failed: {e}");
+                return;
+            }
+        }
+
+        // Refresh and select the new path.
+        if let Err(e) = self.refresh_files() {
+            self.status_message = format!("Renamed; refresh failed: {e}");
+            return;
+        }
+        self.jump_to(&new_rel);
+
+        // If the file was mapped to a gist, push the rename remotely too.
+        // GitHub's gist filename is just the basename (we set it that way on
+        // upload), so we only need to touch the remote if the basename changed.
+        if let Some(entry) = entry {
+            let old_base = std::path::Path::new(&old_rel)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let new_base = std::path::Path::new(&new_rel)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if old_base != new_base {
+                let Some(token) = self.token.clone() else {
+                    self.status_message = "Renamed locally; no token to update remote gist.".into();
+                    return;
+                };
+                let tx = self.async_tx.clone();
+                let new_rel_clone = new_rel.clone();
+                self.status_message = "Renamed locally; updating remote gist...".to_string();
+                let gist_id = entry.gist_id.clone();
+                self.spawn_tracked(async move {
+                    let client = gist_rs::GistClient::new(token);
+                    let result = client
+                        .rename_file(&gist_id, &old_base, &new_base)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(AsyncEvent::RenameRemoteDone {
+                        rel_path: new_rel_clone,
+                        result,
+                    });
+                });
+            } else {
+                self.status_message = format!("Renamed: {old_rel} → {new_rel}");
+            }
+        } else {
+            self.status_message = format!("Renamed: {old_rel} → {new_rel}");
         }
     }
 

@@ -11,7 +11,15 @@ pub struct ScannedFile {
     pub modified: SystemTime,
 }
 
-/// Walk `root` recursively, collecting all `.md` files, sorted by mtime (newest first).
+/// Text file extensions surfaced in the tree. Limited to formats that
+/// round-trip cleanly through a gist (text, diffable). Binary formats
+/// (pdf/png/etc.) are intentionally excluded — they don't fit the sync model.
+pub fn is_supported_ext(ext: &str) -> bool {
+    matches!(ext, "md" | "json")
+}
+
+/// Walk `root` recursively, collecting all supported files, sorted by mtime
+/// (newest first).
 pub fn scan_directory(root: &Path) -> Result<Vec<ScannedFile>> {
     let mut files = Vec::new();
     walk_dir(root, root, &mut files)?;
@@ -45,7 +53,11 @@ fn walk_dir(root: &Path, dir: &Path, out: &mut Vec<ScannedFile>) -> Result<()> {
             if out.len() == before {
                 continue;
             }
-        } else if path.extension().is_some_and(|e| e == "md") {
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(is_supported_ext)
+        {
             let rel = path
                 .strip_prefix(root)
                 .unwrap_or(&path)

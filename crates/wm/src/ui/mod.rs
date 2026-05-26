@@ -121,10 +121,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         _ => {
             let title = right_pane_title("Preview", Color::Cyan, &trimmed);
+            let ext = std::path::Path::new(&rel)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
             preview::render_preview(
                 f,
                 panes[1],
                 &app.preview_content,
+                ext,
                 title,
                 app.preview_scroll,
                 right_focused,
@@ -217,6 +222,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         Mode::ReplaceReview { selected } => {
             dialogs::render_replace_review(f, f.area(), app, *selected);
+        }
+        Mode::Rename { old_rel } => {
+            dialogs::render_input_dialog(
+                f,
+                f.area(),
+                "Rename / move",
+                &format!("New path for {old_rel} (relative to root):"),
+                &app.input_editor,
+            );
         }
         _ => {}
     }

@@ -4,7 +4,7 @@ A terminal UI for managing local markdown files synced to GitHub Gists.
 
 ## Features
 
-- **Tree-based file browser** for one or more local writing directories, arbitrarily nested
+- **Tree-based file browser** for one or more local writing directories, arbitrarily nested — supports `.md` and `.json` (with pretty-printed, syntax-highlighted JSON preview)
 - **Push / pull / delete** local markdown files to/from gists; per-file sync status with at-a-glance counts in the status bar
 - **Diff view** of local vs remote
 - **Open gist in browser** (`o`) and **copy gist URL** (`c`) for quick sharing
@@ -87,6 +87,7 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `V` | Normal | Paste clipboard (HTML converted to markdown) as a new file |
 | `o` | Normal | Open gist URL in the system browser |
 | `e` | Normal | Edit selected file in `$EDITOR` (TUI suspends, then refreshes) |
+| `m` | Normal | Rename / move the selected file (updates store + remote gist filename) |
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
 | `_` | Normal | Move local file to the system trash (with confirmation) |
 | `H` | Normal | Hydrate — match existing gists to files |

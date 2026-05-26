@@ -50,6 +50,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("c", "Copy gist URL to clipboard"),
                 ("o", "Open gist URL in browser"),
                 ("e", "Edit selected file in $EDITOR"),
+                ("m", "Rename / move the selected file"),
                 ("X", "Delete remote gist (keeps local file)"),
                 ("_", "Move local file to system trash (with confirm)"),
                 ("D", "Diff local vs remote"),
