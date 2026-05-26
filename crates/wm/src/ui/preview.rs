@@ -150,11 +150,12 @@ fn try_render_table(lines: &[&str], start: usize, out: &mut Vec<Line<'static>>) 
         border_style,
     ));
     render_logical_row(&header_cells, &widths, &sep, Some(header_style), out);
-    out.push(Line::styled(
-        border_row("├", "┼", "┤", &widths),
-        border_style,
-    ));
-    for row in &body {
+    let mid_border = Line::styled(border_row("├", "┼", "┤", &widths), border_style);
+    out.push(mid_border.clone());
+    for (i, row) in body.iter().enumerate() {
+        if i > 0 {
+            out.push(mid_border.clone());
+        }
         render_logical_row(row, &widths, &sep, None, out);
     }
     out.push(Line::styled(
@@ -596,6 +597,19 @@ mod tests {
         let row3_text: String = lines[5].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(row2_text.contains("AC: 15"));
         assert!(row3_text.contains("STR: 8"));
+    }
+
+    #[test]
+    fn body_rows_get_horizontal_separators_between_them() {
+        let md = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n";
+        let lines = highlight(md);
+        // top + header + mid + body1 + mid + body2 + mid + body3 + bottom = 9
+        assert_eq!(lines.len(), 9);
+        // Visual rows 2, 4, 6 should all be ├─┼─┤ inter-row separators.
+        for i in [2usize, 4, 6] {
+            let t: String = lines[i].spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(t.starts_with('├') && t.ends_with('┤'), "row {i}: {t:?}");
+        }
     }
 
     #[test]
