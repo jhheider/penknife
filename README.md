@@ -33,14 +33,37 @@ cargo build --release
 ./target/release/wm
 ```
 
+### CLI flags
+
+```
+wm                  # launch the TUI
+wm --config         # open config.toml in $EDITOR
+wm --version        # print version
+wm --help           # print flag help
+```
+
 ### First run
 
 If no roots are configured, the app opens a setup dialog. Type a path to a directory of markdown files (`~` is expanded) and press **Enter**. From there, all writings under that directory are scanned recursively.
 
 State is persisted under your platform data dir (`~/Library/Application Support/writings-manager` on macOS, `~/.local/share/writings-manager` on Linux):
 
-- `config.json` — list of configured roots
+- `config.toml` — list of configured roots + user-defined aliases
 - `store.json` — per-(root, file) gist mappings
+
+Edit the config directly with `wm --config` (opens `config.toml` in `$EDITOR`).
+Add user aliases under `[aliases]`:
+
+```toml
+[aliases]
+S = "just stats"        # quick word-count summary
+A = "just ai-commit"
+P = "git push"
+```
+
+Single-character keys only; keys that conflict with built-in bindings are dropped
+at load time with a warning. Commands run via `sh -c` with PWD set to the
+active root.
 
 Tokens are **not** persisted by this tool — they're resolved fresh on each launch.
 

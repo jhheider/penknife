@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -6,7 +7,13 @@ use crate::error::Result;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub roots: Vec<PathBuf>,
+    /// User-defined single-character key → shell-command map. Run from Normal
+    /// mode via `sh -c`, with PWD set to the active root. Keys conflicting
+    /// with built-in TUI bindings are dropped at load time with a warning.
+    #[serde(default)]
+    pub aliases: BTreeMap<String, String>,
 }
 
 impl Config {
@@ -16,30 +23,31 @@ impl Config {
             .join("writings-manager")
     }
 
-    fn config_path() -> PathBuf {
-        Self::data_dir().join("config.json")
+    pub fn config_path() -> PathBuf {
+        Self::data_dir().join("config.toml")
     }
 
     pub fn load() -> Result<Self> {
         let path = Self::config_path();
         if path.exists() {
             let data = std::fs::read_to_string(&path)?;
-            match serde_json::from_str::<Config>(&data) {
+            match toml::from_str::<Config>(&data) {
                 Ok(config) => Ok(config),
                 Err(e) => {
                     eprintln!("Warning: invalid config, starting fresh: {e}");
-                    Ok(Config { roots: Vec::new() })
+                    Ok(Config::default())
                 }
             }
         } else {
-            Ok(Config { roots: Vec::new() })
+            Ok(Config::default())
         }
     }
 
     pub fn save(&self) -> Result<()> {
         let dir = Self::data_dir();
         std::fs::create_dir_all(&dir)?;
-        let data = serde_json::to_string_pretty(self)?;
+        let data = toml::to_string_pretty(self)
+            .map_err(|e| crate::error::WmError::Other(format!("toml serialize: {e}")))?;
         std::fs::write(Self::config_path(), data)?;
         Ok(())
     }

@@ -23,7 +23,7 @@ fn modal_area(area: Rect, width_pct: u16, height_pct: u16) -> Rect {
 }
 
 /// Render the help overlay.
-pub fn render_help(f: &mut Frame, area: Rect) {
+pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
     let modal = modal_area(area, 60, 70);
     f.render_widget(Clear, modal);
 
@@ -101,6 +101,20 @@ pub fn render_help(f: &mut Frame, area: Rect) {
             ]));
         }
     }
+    // Configured aliases, if any.
+    if !app.config.aliases.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("Aliases (from config.toml)", header_style));
+        for (k, cmd) in &app.config.aliases {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{k:<12}"), key_style),
+                Span::raw(" "),
+                Span::styled(cmd.clone(), desc_style),
+            ]));
+        }
+    }
+
     lines.push(Line::raw(""));
     lines.push(Line::styled(
         "In Diff view: j/k, arrows, PgUp/PgDn scroll; Esc/q exits.",

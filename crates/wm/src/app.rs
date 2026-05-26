@@ -122,6 +122,9 @@ pub struct App {
     /// If set, main.rs should suspend the TUI, spawn `$EDITOR` on this file,
     /// then resume. Cleared by the main loop before each editor invocation.
     pub pending_editor: Option<PathBuf>,
+    /// If set, main.rs should suspend the TUI and run this shell command
+    /// (via `sh -c`) with PWD set to the active root, then resume.
+    pub pending_alias: Option<String>,
     /// Multi-file find-and-replace state — populated as the user moves
     /// through ReplaceQuery → ReplaceTarget → ReplaceReview.
     pub replace_query: String,
@@ -145,10 +148,44 @@ struct StatusCounts {
     not_gisted: usize,
 }
 
+/// Single-character keys reserved by the TUI's built-in bindings. User
+/// aliases cannot shadow these — conflicting entries are dropped at load
+/// time and reported in the status bar.
+const RESERVED_KEYS: &[char] = &[
+    'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
+    'H', 'r', 'R', 'I', 's',
+];
+
 impl App {
     pub fn new(async_tx: AsyncSender) -> Result<Self> {
-        let config = Config::load()?;
+        let mut config = Config::load()?;
         let store = Store::load()?;
+
+        // Filter aliases against built-in keys and shape constraints (single
+        // character keys only). Collect names of any drops to surface in the
+        // status bar so the user sees the warning without scraping stderr.
+        let mut dropped: Vec<String> = Vec::new();
+        config.aliases.retain(|k, _cmd| {
+            let chars: Vec<char> = k.chars().collect();
+            if chars.len() != 1 {
+                dropped.push(format!("'{k}' (not a single char)"));
+                return false;
+            }
+            if RESERVED_KEYS.contains(&chars[0]) {
+                dropped.push(format!("'{k}' (built-in)"));
+                return false;
+            }
+            true
+        });
+        let alias_warning = if dropped.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "Dropped alias{}: {}",
+                if dropped.len() == 1 { "" } else { "es" },
+                dropped.join(", ")
+            ))
+        };
 
         let token = gist_rs::auth::resolve_token().ok();
 
@@ -196,6 +233,7 @@ impl App {
             mouse_capture: false,
             tasks: Vec::new(),
             pending_editor: None,
+            pending_alias: None,
             replace_query: String::new(),
             replace_target: String::new(),
             replace_matches: Vec::new(),
@@ -203,12 +241,21 @@ impl App {
         };
         app.rebuild_tree();
         app.update_status();
+        if let Some(w) = alias_warning {
+            app.status_message = w;
+        }
         Ok(app)
     }
 
     /// Get the current root directory, if any.
     fn current_root(&self) -> Option<&PathBuf> {
         self.config.roots.get(self.active_root)
+    }
+
+    /// Public accessor for the active root path. Used by main.rs to set the
+    /// working directory when running user aliases or other shell-outs.
+    pub fn active_root_path(&self) -> Option<PathBuf> {
+        self.current_root().cloned()
     }
 
     /// Spawn a tokio task and track its JoinHandle so it can be aborted on quit.
@@ -926,6 +973,14 @@ impl App {
             }
             KeyCode::PageDown => self.scroll_right_pane(10, true),
             KeyCode::PageUp => self.scroll_right_pane(10, false),
+            // Last: try user-configured aliases. Only single-char keys
+            // without Ctrl held can fire an alias (Ctrl-letter combinations
+            // are reserved for future use and would surprise users).
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(cmd) = self.config.aliases.get(&c.to_string()).cloned() {
+                    self.pending_alias = Some(cmd);
+                }
+            }
             _ => {}
         }
     }

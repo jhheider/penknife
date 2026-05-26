@@ -151,7 +151,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Modal overlays
     match &app.mode {
-        Mode::Help => dialogs::render_help(f, f.area()),
+        Mode::Help => dialogs::render_help(f, f.area(), app),
         Mode::FilePicker { selected } => {
             dialogs::render_file_picker(f, f.area(), app, *selected);
         }

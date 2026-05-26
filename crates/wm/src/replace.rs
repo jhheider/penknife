@@ -154,14 +154,13 @@ mod tests {
     use std::fs;
 
     fn tmp() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let mut p = std::env::temp_dir();
-        p.push(format!("wm-replace-test-{}", std::process::id()));
         p.push(format!(
-            "{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            "wm-replace-test-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&p).unwrap();
         p

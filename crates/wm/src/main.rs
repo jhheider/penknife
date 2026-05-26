@@ -28,6 +28,10 @@ use event::{UiEvent, async_channel};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
+    if let Some(action) = parse_cli_args() {
+        return run_cli_action(action);
+    }
+
     // Panic hook: restore terminal before printing panic
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
@@ -70,6 +74,10 @@ async fn main() -> color_eyre::Result<()> {
             suspend_and_edit(&mut terminal, &mut app, &path)?;
         }
 
+        if let Some(cmd) = app.pending_alias.take() {
+            suspend_and_run_alias(&mut terminal, &mut app, &cmd)?;
+        }
+
         if app.should_quit {
             break;
         }
@@ -84,6 +92,71 @@ async fn main() -> color_eyre::Result<()> {
     io::stdout().execute(LeaveAlternateScreen)?;
 
     Ok(())
+}
+
+/// CLI sub-modes that complete before (or instead of) the TUI starts.
+enum CliAction {
+    Help,
+    Version,
+    EditConfig,
+}
+
+/// Parse a tiny argv vocabulary. Returns Some(action) if the caller asked
+/// for a one-shot CLI mode; None means "fall through to the TUI."
+fn parse_cli_args() -> Option<CliAction> {
+    let mut args = std::env::args().skip(1);
+    let first = args.next()?;
+    match first.as_str() {
+        "-h" | "--help" | "-?" => Some(CliAction::Help),
+        "-V" | "--version" => Some(CliAction::Version),
+        "-c" | "--config" => Some(CliAction::EditConfig),
+        other => {
+            eprintln!("wm: unknown argument: {other}");
+            eprintln!("Run with --help to see options.");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn run_cli_action(action: CliAction) -> color_eyre::Result<()> {
+    match action {
+        CliAction::Help => {
+            println!(
+                "wm — a TUI for managing markdown files synced to GitHub Gists\n\n\
+                 USAGE:\n  \
+                 wm [FLAGS]\n\n\
+                 FLAGS:\n  \
+                 -h, --help, -?    Show this message\n  \
+                 -V, --version     Print version\n  \
+                 -c, --config      Open the config file in $EDITOR and exit\n\n\
+                 With no flags, launches the TUI. See the help screen inside the\n\
+                 app (press `?`) for the full keybinding reference."
+            );
+            Ok(())
+        }
+        CliAction::Version => {
+            println!("wm {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        CliAction::EditConfig => {
+            let path = config::Config::config_path();
+            // Ensure the file exists (and the parent dir) so the editor has
+            // something to open. If we have any saved state, leave it alone;
+            // otherwise drop a minimal scaffold the user can edit.
+            if !path.exists() {
+                let cfg = config::Config::load()?;
+                cfg.save()?;
+            }
+            let editor = std::env::var("EDITOR")
+                .or_else(|_| std::env::var("VISUAL"))
+                .unwrap_or_else(|_| "vi".to_string());
+            let status = std::process::Command::new(&editor).arg(&path).status()?;
+            if !status.success() {
+                eprintln!("{editor} exited with status {status}");
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Suspend the TUI (leave alt screen, drop raw mode, release mouse capture),
@@ -129,6 +202,58 @@ fn suspend_and_edit(
         }
         Err(e) => {
             app.status_message = format!("Failed to launch {editor}: {e}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Suspend the TUI, run a user-defined alias command via `sh -c`, then
+/// restore. Working directory is the active root so commands like
+/// `git push` operate on the right repo when the root is one. We refresh
+/// the file list afterward in case the command modified anything.
+fn suspend_and_run_alias(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    cmd: &str,
+) -> color_eyre::Result<()> {
+    let cwd = app.active_root_path();
+
+    let had_mouse = app.mouse_capture;
+    if had_mouse {
+        let _ = io::stdout().execute(DisableMouseCapture);
+    }
+    disable_raw_mode()?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+
+    let mut command = std::process::Command::new("sh");
+    command.arg("-c").arg(cmd);
+    if let Some(d) = &cwd {
+        command.current_dir(d);
+    }
+    let status = command.status();
+
+    enable_raw_mode()?;
+    io::stdout().execute(EnterAlternateScreen)?;
+    if had_mouse {
+        let _ = io::stdout().execute(EnableMouseCapture);
+    }
+    terminal.clear()?;
+
+    match status {
+        Ok(s) if s.success() => {
+            if let Err(e) = app.refresh_files() {
+                app.status_message = format!("Refresh after alias failed: {e}");
+            } else {
+                app.status_message = format!("Ran: {cmd}");
+            }
+            app.update_status();
+        }
+        Ok(s) => {
+            app.status_message = format!("`{cmd}` exited with status {s}");
+        }
+        Err(e) => {
+            app.status_message = format!("Failed to run `{cmd}`: {e}");
         }
     }
 
