@@ -59,6 +59,8 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `d` | Normal | Pull remote into selected file (with confirmation) |
 | `D` | Normal | Diff local vs remote |
 | `c` | Normal | Copy gist URL to clipboard (auto-pushes if not yet gisted) |
+| `C` | Normal | Copy selected file's contents to clipboard |
+| `V` | Normal | Paste clipboard (HTML converted to markdown) as a new file |
 | `o` | Normal | Open gist URL in the system browser |
 | `e` | Normal | Edit selected file in `$EDITOR` (TUI suspends, then refreshes) |
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |

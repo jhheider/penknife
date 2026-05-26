@@ -847,6 +847,12 @@ impl App {
             KeyCode::Char('u') => self.do_sync_up(),
             KeyCode::Char('d') => self.confirm_sync_down(),
             KeyCode::Char('c') => self.do_copy_url(),
+            KeyCode::Char('C') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.do_copy_file_contents();
+            }
+            KeyCode::Char('V') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.do_paste_rich();
+            }
             KeyCode::Char('e') => self.do_request_edit(),
             KeyCode::Char('o') => self.do_open_in_browser(),
             KeyCode::Char('X') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1295,6 +1301,71 @@ impl App {
                 false
             }
         }
+    }
+
+    /// Copy the currently-selected file's full contents to the system
+    /// clipboard. Convenience for pasting session notes / character sheets
+    /// into Claude (or anywhere else) without opening the file first.
+    fn do_copy_file_contents(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            self.status_message = "No file selected.".into();
+            return;
+        };
+        let abs = self.abs_path(&rel);
+        let content = match std::fs::read_to_string(&abs) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status_message = format!("Read error: {e}");
+                return;
+            }
+        };
+        let bytes = content.len();
+        match arboard::Clipboard::new().and_then(|mut c| c.set_text(content)) {
+            Ok(()) => {
+                self.status_message = format!("Copied {bytes} bytes from {rel}");
+            }
+            Err(e) => {
+                self.status_message = format!("Clipboard error: {e}");
+            }
+        }
+    }
+
+    /// Read the clipboard. If it has rich HTML (from a browser, doc editor,
+    /// etc.), run it through htmd to produce markdown; otherwise fall back
+    /// to plain text. Stash the result and prompt for a filename, reusing
+    /// the existing GdocFilename flow (which is purely "save this content
+    /// under root with this name").
+    fn do_paste_rich(&mut self) {
+        let mut clip = match arboard::Clipboard::new() {
+            Ok(c) => c,
+            Err(e) => {
+                self.status_message = format!("Clipboard error: {e}");
+                return;
+            }
+        };
+        let content = match clip.get().html() {
+            Ok(html) => match htmd::convert(&html) {
+                Ok(md) => md,
+                Err(e) => {
+                    self.status_message = format!("HTML→Markdown failed: {e}");
+                    return;
+                }
+            },
+            Err(_) => match clip.get_text() {
+                Ok(text) if !text.is_empty() => text,
+                Ok(_) => {
+                    self.status_message = "Clipboard is empty.".into();
+                    return;
+                }
+                Err(e) => {
+                    self.status_message = format!("Clipboard read failed: {e}");
+                    return;
+                }
+            },
+        };
+        self.gdoc_content = Some(content);
+        self.input_editor = LineEditor::new();
+        self.mode = Mode::GdocFilename;
     }
 
     fn do_diff(&mut self) {

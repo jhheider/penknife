@@ -56,6 +56,13 @@ pub fn render_help(f: &mut Frame, area: Rect) {
             ],
         ),
         (
+            "Clipboard",
+            &[
+                ("C", "Copy selected file's contents to clipboard"),
+                ("V", "Paste clipboard (rich HTML → markdown) as new file"),
+            ],
+        ),
+        (
             "Files & roots",
             &[
                 ("/", "Fuzzy file picker (fzf-style)"),
