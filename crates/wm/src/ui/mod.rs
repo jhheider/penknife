@@ -10,6 +10,25 @@ use tui_tree_widget::Tree;
 
 use crate::app::{App, Mode, PaneFocus};
 
+/// Build a colored pane title: a bold-colored mode label, optionally
+/// followed by " · " and the (already-truncated) path in white.
+fn right_pane_title(label: &str, label_color: Color, path: &str) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        label.to_string(),
+        Style::default()
+            .fg(label_color)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if !path.is_empty() {
+        spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            path.to_string(),
+            Style::default().fg(Color::White),
+        ));
+    }
+    Line::from(spans)
+}
+
 /// Truncate a path for use as a pane title. Keeps the rightmost (most
 /// specific) part visible by ellipsizing the front when needed.
 fn truncate_path_for_title(path: &str, max: usize) -> String {
@@ -52,16 +71,29 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     } else {
         Color::DarkGray
     };
-    let title = format!("{} Files ({})", g.file_pane, app.files.len());
+    let cyan_bold = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let title_line = Line::from(vec![
+        Span::styled(
+            format!("{} ", g.file_pane),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::styled("Files", cyan_bold),
+        Span::raw(" "),
+        Span::styled("(", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            app.files.len().to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(")", Style::default().fg(Color::DarkGray)),
+    ]);
     let tree_block = Block::default()
         .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(tree_border))
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
+        .title(title_line)
+        .border_style(Style::default().fg(tree_border));
     let tree_widget = Tree::new(&app.tree_items)
         .expect("tree widget")
         .block(tree_block)
@@ -76,43 +108,46 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let trimmed = truncate_path_for_title(&rel, max_title_width);
     match &app.mode {
         Mode::Diff { local, remote } => {
-            let title = if trimmed.is_empty() {
-                "Diff".to_string()
-            } else {
-                format!("Diff · {trimmed}")
-            };
+            let title = right_pane_title("Diff", Color::Yellow, &trimmed);
             diff::render_diff(
                 f,
                 panes[1],
                 local,
                 remote,
-                &title,
+                title,
                 app.diff_scroll,
                 right_focused,
             );
         }
         _ => {
-            let title = if trimmed.is_empty() {
-                "Preview".to_string()
-            } else {
-                format!("Preview · {trimmed}")
-            };
+            let title = right_pane_title("Preview", Color::Cyan, &trimmed);
             preview::render_preview(
                 f,
                 panes[1],
                 &app.preview_content,
-                &title,
+                title,
                 app.preview_scroll,
                 right_focused,
             );
         }
     }
 
-    // Status bar
-    let status_text = &app.status_message;
-    let status = Paragraph::new(status_text.clone())
-        .style(Style::default().bg(Color::DarkGray).fg(app.status_color));
-    f.render_widget(status, status_area);
+    // Status bar. If status_spans is fresh (its concatenated text matches
+    // status_message), render the multi-color version; otherwise the message
+    // was set by a transient action and we fall back to a flat color.
+    let spans_text: String = app
+        .status_spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    let base = Style::default().bg(Color::DarkGray);
+    if !app.status_spans.is_empty() && spans_text == app.status_message {
+        let line = Line::from(app.status_spans.clone());
+        f.render_widget(Paragraph::new(line).style(base), status_area);
+    } else {
+        let status = Paragraph::new(app.status_message.clone()).style(base.fg(app.status_color));
+        f.render_widget(status, status_area);
+    }
 
     // Modal overlays
     match &app.mode {

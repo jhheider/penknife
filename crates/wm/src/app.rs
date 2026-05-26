@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Span;
 use tokio::task::JoinHandle;
 use tui_tree_widget::TreeState;
 
@@ -72,6 +73,13 @@ pub struct App {
     pub preview_content: String,
     pub status_message: String,
     pub status_color: Color,
+    /// Styled spans that mirror `status_message`. When non-empty and their
+    /// concatenated text equals `status_message`, the renderer uses these for
+    /// a multi-color dashboard; otherwise it falls back to the flat string +
+    /// `status_color`. This means transient setters that touch only
+    /// `status_message` don't need to clear spans — the mismatch invalidates
+    /// the rich version automatically.
+    pub status_spans: Vec<Span<'static>>,
     pub picker_editor: LineEditor,
     pub picker: crate::picker::Picker,
     pub picker_matches: Vec<crate::picker::PickerMatch>,
@@ -149,6 +157,7 @@ impl App {
             preview_content: String::new(),
             status_message: String::new(),
             status_color: Color::White,
+            status_spans: Vec::new(),
             picker_editor: LineEditor::new(),
             picker: crate::picker::Picker::new(),
             picker_matches: Vec::new(),
@@ -315,6 +324,7 @@ impl App {
 
     pub fn update_status(&mut self) {
         let current_root = self.current_root().cloned();
+        let g = crate::glyphs::glyphs();
         if let Some(ref rel) = self.selected_file() {
             let entry = current_root
                 .as_ref()
@@ -329,6 +339,37 @@ impl App {
             self.status_color = status.color();
             let url = entry.as_ref().map(|e| e.url.as_str()).unwrap_or("no gist");
             self.status_message = format!("{} {} | {url}", status.icon(), rel);
+
+            let status_color = status.color();
+            let mut spans = vec![
+                Span::styled(
+                    format!("{} ", status.icon()),
+                    Style::default().fg(status_color),
+                ),
+                Span::styled(
+                    rel.to_string(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+            ];
+            if entry.is_some() {
+                spans.push(Span::styled(
+                    url.to_string(),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::UNDERLINED),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    "no gist".to_string(),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                ));
+            }
+            self.status_spans = spans;
         } else {
             let counts = self.status_counts();
             self.status_color = if counts.conflict > 0 {
@@ -342,7 +383,6 @@ impl App {
             } else {
                 Color::Green
             };
-            let g = crate::glyphs::glyphs();
             let root_label = current_root
                 .map(|r| r.display().to_string())
                 .unwrap_or_else(|| "(no root)".into());
@@ -360,6 +400,69 @@ impl App {
                 g.status_not_gisted,
                 counts.not_gisted,
             );
+
+            // Rich dashboard: root in magenta, each count colored by category.
+            // Zero counts dim to keep the eye on what actually needs attention.
+            let mut spans: Vec<Span<'static>> = Vec::with_capacity(24);
+            spans.push(Span::styled(
+                format!("{} ", g.root),
+                Style::default().fg(Color::Magenta),
+            ));
+            spans.push(Span::styled(
+                root_label,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled("  │  ", Style::default().fg(Color::DarkGray)));
+            let cells = [
+                (
+                    g.status_synced,
+                    sync::SyncStatus::Synced.color(),
+                    counts.synced,
+                ),
+                (
+                    g.status_local_newer,
+                    sync::SyncStatus::LocalNewer.color(),
+                    counts.local_newer,
+                ),
+                (
+                    g.status_remote_newer,
+                    sync::SyncStatus::RemoteNewer.color(),
+                    counts.remote_newer,
+                ),
+                (
+                    g.status_conflict,
+                    sync::SyncStatus::Conflict.color(),
+                    counts.conflict,
+                ),
+                (
+                    g.status_not_gisted,
+                    sync::SyncStatus::NotGisted.color(),
+                    counts.not_gisted,
+                ),
+            ];
+            for (i, (icon, color, count)) in cells.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw("  "));
+                }
+                if *count == 0 {
+                    spans.push(Span::styled(
+                        format!("{icon} {count}"),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                } else {
+                    spans.push(Span::styled(
+                        format!("{icon} "),
+                        Style::default().fg(*color),
+                    ));
+                    spans.push(Span::styled(
+                        count.to_string(),
+                        Style::default().fg(*color).add_modifier(Modifier::BOLD),
+                    ));
+                }
+            }
+            self.status_spans = spans;
         }
     }
 
@@ -983,14 +1086,7 @@ impl App {
 
         self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
-            let result = sync::push(
-                &client,
-                store_snapshot.as_ref(),
-                &rel_clone,
-                &filename,
-                &content,
-            )
-            .await;
+            let result = sync::push(&client, store_snapshot.as_ref(), &filename, &content).await;
             let _ = tx.send(AsyncEvent::PushDone {
                 root: root_clone,
                 rel_path: rel_clone,

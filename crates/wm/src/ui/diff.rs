@@ -8,7 +8,7 @@ pub fn render_diff(
     area: Rect,
     local: &str,
     remote: &str,
-    title: &str,
+    title: Line<'static>,
     scroll: u16,
     focused: bool,
 ) {
@@ -32,7 +32,7 @@ pub fn render_diff(
     };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("Diff: {title}"))
+        .title(title)
         .border_style(Style::default().fg(border));
 
     let paragraph = Paragraph::new(lines)

@@ -27,39 +27,91 @@ pub fn render_help(f: &mut Frame, area: Rect) {
     let modal = modal_area(area, 60, 70);
     f.render_widget(Clear, modal);
 
-    let help_text = "\
-Navigation
-  Tab          Toggle focus: tree pane ↔ preview/diff pane
-  j/k/↑/↓     Navigate the focused pane
-  Enter/l/→    Expand / select (tree pane)
-  h/←/Bksp    Collapse (tree pane)
-  PgUp/PgDn   Scroll preview/diff (any focus)
-  n / N        Jump to next / previous non-synced file
+    // Section headers and key/description pairs. Each pair is rendered with
+    // the key chord in yellow/bold and the description in default white —
+    // makes the table easier to scan than the previous monochrome block.
+    let sections: &[(&str, &[(&str, &str)])] = &[
+        (
+            "Navigation",
+            &[
+                ("Tab", "Toggle focus: tree pane ↔ preview/diff pane"),
+                ("j/k  ↑/↓", "Navigate the focused pane"),
+                ("Enter  l  →", "Expand / select (tree pane)"),
+                ("h  ←  Bksp", "Collapse (tree pane)"),
+                ("PgUp/PgDn", "Scroll preview/diff (any focus)"),
+                ("n / N", "Jump to next / previous non-synced file"),
+            ],
+        ),
+        (
+            "Gist actions",
+            &[
+                ("u", "Push selected file to gist"),
+                ("d", "Pull remote into selected file"),
+                ("c", "Copy gist URL to clipboard"),
+                ("o", "Open gist URL in browser"),
+                ("e", "Edit selected file in $EDITOR"),
+                ("X", "Delete remote gist (keeps local file)"),
+                ("D", "Diff local vs remote"),
+                ("H", "Hydrate — match existing gists to files"),
+            ],
+        ),
+        (
+            "Files & roots",
+            &[
+                ("/", "Fuzzy file picker (fzf-style)"),
+                ("I", "Import a Google Doc as markdown"),
+                ("R", "Switch root directory"),
+                ("r", "Refresh file tree"),
+                ("?", "This help"),
+                ("q", "Quit"),
+            ],
+        ),
+    ];
 
-Gist actions
-  u            Push selected file to gist
-  d            Pull remote into selected file
-  c            Copy gist URL to clipboard
-  o            Open gist URL in browser
-  e            Edit selected file in $EDITOR
-  X            Delete remote gist (keeps local file)
-  D            Diff local vs remote
-  H            Hydrate — match existing gists to files
+    let key_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let header_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::White);
+    let dim = Style::default().fg(Color::DarkGray);
 
-Files & roots
-  /            Fuzzy file picker (fzf-style)
-  I            Import a Google Doc as markdown
-  R            Switch root directory
-  r            Refresh file tree
-  ?            This help
-  q            Quit
-
-In Diff view: j/k, arrows, PgUp/PgDn scroll; Esc/q exits.
-
-Mouse: cmd-click on URLs and native selection work by default.
-Set WM_MOUSE=1 to enable click-to-select + wheel-scroll routing instead.
-
-Press any key to close.";
+    let mut lines: Vec<Line> = Vec::new();
+    for (idx, (header, pairs)) in sections.iter().enumerate() {
+        if idx > 0 {
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::styled(header.to_string(), header_style));
+        for (key, desc) in *pairs {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{key:<12}"), key_style),
+                Span::raw(" "),
+                Span::styled(desc.to_string(), desc_style),
+            ]));
+        }
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "In Diff view: j/k, arrows, PgUp/PgDn scroll; Esc/q exits.",
+        dim,
+    ));
+    lines.push(Line::styled(
+        "Mouse: cmd-click on URLs and native selection work by default.",
+        dim,
+    ));
+    lines.push(Line::styled(
+        "Set WM_MOUSE=1 to enable click-to-select + wheel-scroll routing.",
+        dim,
+    ));
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "Press any key to close.",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::ITALIC),
+    ));
 
     let g = crate::glyphs::glyphs();
     let block = Block::default()
@@ -71,7 +123,7 @@ Press any key to close.";
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         );
-    let para = Paragraph::new(help_text)
+    let para = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
     f.render_widget(para, modal);
@@ -87,16 +139,32 @@ pub fn render_file_picker(f: &mut Frame, area: Rect, app: &App, selected: usize)
     let g = crate::glyphs::glyphs();
     let total = app.files.len();
     let shown = app.picker_matches.len();
-    let title = format!("{} Find file  ({shown}/{total})", g.search);
+    let yellow_bold = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let title_line = Line::from(vec![
+        Span::styled(format!("{} ", g.search), Style::default().fg(Color::Yellow)),
+        Span::styled("Find file", yellow_bold),
+        Span::raw("  "),
+        Span::styled("(", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            shown.to_string(),
+            Style::default()
+                .fg(if shown == 0 {
+                    Color::DarkGray
+                } else {
+                    Color::Cyan
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("/", Style::default().fg(Color::DarkGray)),
+        Span::styled(total.to_string(), Style::default().fg(Color::White)),
+        Span::styled(")", Style::default().fg(Color::DarkGray)),
+    ]);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(Color::Yellow))
-        .title_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
+        .title(title_line)
+        .border_style(Style::default().fg(Color::Yellow));
     let inner = block.inner(modal);
     f.render_widget(block, modal);
 
@@ -191,7 +259,24 @@ pub fn render_input_dialog(
     let modal = modal_area(area, 60, 15);
     f.render_widget(Clear, modal);
 
-    let text = format!("{prompt}\n\n> {}", editor.content);
+    let lines = vec![
+        Line::styled(
+            prompt.to_string(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled(
+                "> ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(editor.content.clone(), Style::default().fg(Color::Yellow)),
+        ]),
+    ];
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title.to_string())
@@ -201,7 +286,9 @@ pub fn render_input_dialog(
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         );
-    let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
+    let para = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     f.render_widget(para, modal);
 }
 
@@ -232,14 +319,37 @@ pub fn render_hydration_progress(f: &mut Frame, area: Rect, progress: &Hydration
     ])
     .split(inner);
 
-    let text = format!(
-        "{}\n\nMatched: {}  |  Total gists: {}  |  Ambiguous: {}",
-        progress.phase,
-        progress.matched,
-        progress.total_gists,
-        progress.ambiguous.len()
-    );
-    let para = Paragraph::new(text).wrap(Wrap { trim: false });
+    let bold = Modifier::BOLD;
+    let yellow_bold = Style::default().fg(Color::Yellow).add_modifier(bold);
+    let dim = Style::default().fg(Color::DarkGray);
+    let lines = vec![
+        Line::styled(progress.phase.clone(), yellow_bold),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("Matched: ", dim),
+            Span::styled(
+                progress.matched.to_string(),
+                Style::default().fg(Color::Green).add_modifier(bold),
+            ),
+            Span::styled("   Total gists: ", dim),
+            Span::styled(
+                progress.total_gists.to_string(),
+                Style::default().fg(Color::Cyan).add_modifier(bold),
+            ),
+            Span::styled("   Ambiguous: ", dim),
+            Span::styled(
+                progress.ambiguous.len().to_string(),
+                Style::default()
+                    .fg(if progress.ambiguous.is_empty() {
+                        Color::DarkGray
+                    } else {
+                        Color::Yellow
+                    })
+                    .add_modifier(bold),
+            ),
+        ]),
+    ];
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
     f.render_widget(para, chunks[0]);
 
     // Gauge: use current_file / total_files if available
@@ -261,14 +371,32 @@ pub fn render_confirm(f: &mut Frame, area: Rect, message: &str) {
     let modal = modal_area(area, 50, 15);
     f.render_widget(Clear, modal);
 
-    let text = format!("{message}\n\n[y] Yes  [n] No");
+    let bold = Modifier::BOLD;
+    let lines = vec![
+        Line::styled(message.to_string(), Style::default().fg(Color::White)),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("[", Style::default().fg(Color::DarkGray)),
+            Span::styled("y", Style::default().fg(Color::Green).add_modifier(bold)),
+            Span::styled("] ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Yes", Style::default().fg(Color::Green)),
+            Span::raw("   "),
+            Span::styled("[", Style::default().fg(Color::DarkGray)),
+            Span::styled("n", Style::default().fg(Color::Red).add_modifier(bold)),
+            Span::styled("] ", Style::default().fg(Color::DarkGray)),
+            Span::styled("No", Style::default().fg(Color::Red)),
+        ]),
+    ];
+
     let g = crate::glyphs::glyphs();
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!("{}  Confirm", g.warn))
         .border_style(Style::default().fg(Color::Red))
-        .title_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
-    let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
+        .title_style(Style::default().fg(Color::Red).add_modifier(bold));
+    let para = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     f.render_widget(para, modal);
 }
 
@@ -441,12 +569,37 @@ pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
         "Enter path to add:"
     };
     let hint = if is_setup {
-        "\n\n(Enter to confirm · Ctrl+Q to quit)"
+        "(Enter to confirm · Ctrl+Q to quit)"
     } else {
-        "\n\n(Enter to confirm · Esc to cancel)"
+        "(Enter to confirm · Esc to cancel)"
     };
 
-    let text = format!("{prompt}\n\n> {}{hint}", app.input_editor.content);
+    let lines = vec![
+        Line::styled(
+            prompt.to_string(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled(
+                "> ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                app.input_editor.content.clone(),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]),
+        Line::raw(""),
+        Line::styled(
+            hint.trim().to_string(),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -456,6 +609,8 @@ pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         );
-    let para = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
+    let para = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     f.render_widget(para, modal);
 }

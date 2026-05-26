@@ -94,10 +94,13 @@ pub async fn full_status(
 }
 
 /// Push local content to gist (create or update). Returns updated FileEntry.
+///
+/// On create, the gist's description is set to `filename` (the basename) — not
+/// the rel_path — because gists are shared to game-specific channels where the
+/// containing tree's directory structure leaks irrelevant context.
 pub async fn push(
     client: &GistClient,
     existing: Option<&FileEntry>,
-    rel_path: &str,
     filename: &str,
     content: &str,
 ) -> Result<FileEntry> {
@@ -107,7 +110,7 @@ pub async fn push(
     let gist = if let Some(entry) = existing {
         client.update(&entry.gist_id, filename, content).await?
     } else {
-        client.create(filename, content, rel_path).await?
+        client.create(filename, content, filename).await?
     };
 
     Ok(FileEntry {
