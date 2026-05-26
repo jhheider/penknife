@@ -544,13 +544,24 @@ impl App {
                     self.mode = Mode::Normal;
                 }
             }
-            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Down => {
                 let max = self.picker_matches.len().saturating_sub(1);
                 self.mode = Mode::FilePicker {
                     selected: (selected + 1).min(max),
                 };
             }
-            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let max = self.picker_matches.len().saturating_sub(1);
+                self.mode = Mode::FilePicker {
+                    selected: (selected + 1).min(max),
+                };
+            }
+            KeyCode::Up => {
+                self.mode = Mode::FilePicker {
+                    selected: selected.saturating_sub(1),
+                };
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = Mode::FilePicker {
                     selected: selected.saturating_sub(1),
                 };
