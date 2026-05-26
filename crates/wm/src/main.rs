@@ -6,6 +6,7 @@ mod gdoc;
 mod glyphs;
 mod hydrate;
 mod picker;
+mod replace;
 mod scanner;
 mod store;
 mod sync;

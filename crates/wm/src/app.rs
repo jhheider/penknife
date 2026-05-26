@@ -49,6 +49,15 @@ pub enum Mode {
         item: usize,
         selected: usize,
     },
+    /// Step 1 of replace: prompt for the search string.
+    ReplaceQuery,
+    /// Step 2 of replace: prompt for the replacement string.
+    ReplaceTarget,
+    /// Step 3: scrollable checklist of all matches. User toggles to omit
+    /// false positives, then Enter applies.
+    ReplaceReview {
+        selected: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +122,12 @@ pub struct App {
     /// If set, main.rs should suspend the TUI, spawn `$EDITOR` on this file,
     /// then resume. Cleared by the main loop before each editor invocation.
     pub pending_editor: Option<PathBuf>,
+    /// Multi-file find-and-replace state — populated as the user moves
+    /// through ReplaceQuery → ReplaceTarget → ReplaceReview.
+    pub replace_query: String,
+    pub replace_target: String,
+    pub replace_matches: Vec<crate::replace::ReplaceMatch>,
+    pub replace_checked: Vec<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,6 +196,10 @@ impl App {
             mouse_capture: false,
             tasks: Vec::new(),
             pending_editor: None,
+            replace_query: String::new(),
+            replace_target: String::new(),
+            replace_matches: Vec::new(),
+            replace_checked: Vec::new(),
         };
         app.rebuild_tree();
         app.update_status();
@@ -511,6 +530,9 @@ impl App {
             Mode::ResolveAmbiguous { .. } => self.handle_resolve_ambiguous_key(key),
             Mode::RootSwitcher { .. } => self.handle_root_switcher_key(key),
             Mode::SetupRoot | Mode::AddRoot => self.handle_setup_or_add_root_key(key),
+            Mode::ReplaceQuery => self.handle_replace_query_key(key),
+            Mode::ReplaceTarget => self.handle_replace_target_key(key),
+            Mode::ReplaceReview { .. } => self.handle_replace_review_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -882,6 +904,7 @@ impl App {
             }
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
             KeyCode::Char('_') => self.confirm_trash_local(),
+            KeyCode::Char('s') => self.start_replace(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_hydration();
             }
@@ -1275,6 +1298,203 @@ impl App {
                 self.status_message = format!("Trash failed: {e}");
             }
         }
+    }
+
+    // ── Find-and-replace flow ───────────────────────────────────────────────
+
+    /// Scope used by find-and-replace: the directory the user is currently
+    /// "inside" in the tree. A selected file → its parent; a selected dir →
+    /// that dir; nothing meaningful → the active root.
+    pub fn replace_scope(&self) -> Option<PathBuf> {
+        let root = self.current_root()?.clone();
+        if let Some(rel) = self.selected_file() {
+            let p = std::path::Path::new(&rel);
+            return Some(p.parent().map(|p| root.join(p)).unwrap_or(root));
+        }
+        let selected = self.tree_state.selected();
+        if let Some(id) = selected.last() {
+            // A directory id is a rel_path like "rp-posts" or "RHoD/rp-posts".
+            if !self.tree_file_ids.contains(id) {
+                return Some(root.join(id));
+            }
+        }
+        Some(root)
+    }
+
+    /// Display label for the scope — e.g. "Red Hand of Doom/rp-posts" or
+    /// "(root)" for the active root itself.
+    pub fn replace_scope_label(&self) -> String {
+        let Some(root) = self.current_root() else {
+            return "(no root)".into();
+        };
+        let Some(scope) = self.replace_scope() else {
+            return "(no root)".into();
+        };
+        let rel = scope.strip_prefix(root).unwrap_or(&scope);
+        let s = rel.to_string_lossy();
+        if s.is_empty() {
+            "(root)".into()
+        } else {
+            s.into_owned()
+        }
+    }
+
+    fn start_replace(&mut self) {
+        if self.current_root().is_none() {
+            self.status_message = "No root directory configured.".into();
+            return;
+        }
+        self.replace_query.clear();
+        self.replace_target.clear();
+        self.replace_matches.clear();
+        self.replace_checked.clear();
+        self.input_editor = LineEditor::new();
+        self.mode = Mode::ReplaceQuery;
+    }
+
+    fn handle_replace_query_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                let q = self.input_editor.content.trim().to_string();
+                if q.is_empty() {
+                    self.status_message = "Search string cannot be empty.".into();
+                    self.mode = Mode::Normal;
+                    return;
+                }
+                self.replace_query = q;
+                self.input_editor = LineEditor::new();
+                self.mode = Mode::ReplaceTarget;
+            }
+            _ => {
+                self.input_editor.handle_key(key);
+            }
+        }
+    }
+
+    fn handle_replace_target_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                // Target may legitimately be empty (delete the matches), so
+                // we don't reject "".
+                self.replace_target = self.input_editor.content.clone();
+                self.run_replace_scan();
+            }
+            _ => {
+                self.input_editor.handle_key(key);
+            }
+        }
+    }
+
+    fn run_replace_scan(&mut self) {
+        let Some(scope) = self.replace_scope() else {
+            self.status_message = "No scope available.".into();
+            self.mode = Mode::Normal;
+            return;
+        };
+        let Some(root) = self.current_root().cloned() else {
+            self.status_message = "No root.".into();
+            self.mode = Mode::Normal;
+            return;
+        };
+        let matches = crate::replace::scan(&scope, &root, &self.replace_query);
+        if matches.is_empty() {
+            self.status_message = format!(
+                "No matches for '{}' in {}",
+                self.replace_query,
+                self.replace_scope_label()
+            );
+            self.mode = Mode::Normal;
+            return;
+        }
+        let n = matches.len();
+        self.replace_checked = vec![true; n];
+        self.replace_matches = matches;
+        self.status_message = format!("Found {n} matches — review and apply.");
+        self.mode = Mode::ReplaceReview { selected: 0 };
+    }
+
+    fn handle_replace_review_key(&mut self, key: KeyEvent) {
+        let Mode::ReplaceReview { selected } = self.mode else {
+            return;
+        };
+        let n = self.replace_matches.len();
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status_message = "Replace cancelled.".into();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.mode = Mode::ReplaceReview {
+                    selected: (selected + 1).min(n.saturating_sub(1)),
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::ReplaceReview {
+                    selected: selected.saturating_sub(1),
+                };
+            }
+            KeyCode::Char(' ') => {
+                if let Some(c) = self.replace_checked.get_mut(selected) {
+                    *c = !*c;
+                }
+            }
+            KeyCode::Char('a') => {
+                for c in self.replace_checked.iter_mut() {
+                    *c = true;
+                }
+            }
+            KeyCode::Char('z') => {
+                for c in self.replace_checked.iter_mut() {
+                    *c = false;
+                }
+            }
+            KeyCode::Enter => self.apply_replace(),
+            _ => {}
+        }
+    }
+
+    fn apply_replace(&mut self) {
+        let to_apply: Vec<crate::replace::ReplaceMatch> = self
+            .replace_matches
+            .iter()
+            .zip(self.replace_checked.iter())
+            .filter_map(|(m, c)| if *c { Some(m.clone()) } else { None })
+            .collect();
+        if to_apply.is_empty() {
+            self.status_message = "Nothing checked — no changes applied.".into();
+            self.mode = Mode::Normal;
+            return;
+        }
+        let result = crate::replace::apply(&to_apply, &self.replace_query, &self.replace_target);
+        let n_files = result.files_changed.len();
+        let mut msg = format!(
+            "Replaced {} of {} ({} file{})",
+            result.applied,
+            to_apply.len(),
+            n_files,
+            if n_files == 1 { "" } else { "s" }
+        );
+        if result.drifted > 0 {
+            msg.push_str(&format!(" — {} skipped (file changed)", result.drifted));
+        }
+        if !result.errors.is_empty() {
+            msg.push_str(&format!(" — {} write error(s)", result.errors.len()));
+        }
+        if let Err(e) = self.refresh_files() {
+            msg.push_str(&format!(" — refresh failed: {e}"));
+        }
+        self.update_preview();
+        self.update_status();
+        self.status_message = msg;
+        self.replace_matches.clear();
+        self.replace_checked.clear();
+        self.mode = Mode::Normal;
     }
 
     /// Move the tree selection to the next file whose sync status is anything

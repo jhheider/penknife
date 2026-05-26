@@ -67,6 +67,7 @@ pub fn render_help(f: &mut Frame, area: Rect) {
             "Files & roots",
             &[
                 ("/", "Fuzzy file picker (fzf-style)"),
+                ("s", "Find & replace (recursive within current scope)"),
                 ("I", "Import a Google Doc as markdown"),
                 ("R", "Switch root directory"),
                 ("r", "Refresh file tree"),
@@ -557,6 +558,198 @@ pub fn render_resolve_ambiguous(
         .block(block)
         .wrap(Wrap { trim: false });
     f.render_widget(para, modal);
+}
+
+/// Render the find-and-replace review dialog. Top line summarizes the
+/// substitution and scope; below, a scrollable checklist where each row is
+/// one match (rel_path:line + the line text with the matched substring
+/// highlighted). Space toggles, a/z select all/none, Enter applies, Esc
+/// aborts.
+pub fn render_replace_review(f: &mut Frame, area: Rect, app: &App, selected: usize) {
+    let modal = modal_area(area, 85, 80);
+    f.render_widget(Clear, modal);
+
+    let g = crate::glyphs::glyphs();
+    let total = app.replace_matches.len();
+    let checked = app.replace_checked.iter().filter(|c| **c).count();
+
+    let title_line = Line::from(vec![
+        Span::styled(format!("{} ", g.search), Style::default().fg(Color::Yellow)),
+        Span::styled(
+            "Replace",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("(", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            checked.to_string(),
+            Style::default()
+                .fg(if checked == 0 {
+                    Color::DarkGray
+                } else {
+                    Color::Green
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("/", Style::default().fg(Color::DarkGray)),
+        Span::styled(total.to_string(), Style::default().fg(Color::White)),
+        Span::styled(" checked)", Style::default().fg(Color::DarkGray)),
+    ]);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title_line)
+        .border_style(Style::default().fg(Color::Yellow));
+    let inner = block.inner(modal);
+    f.render_widget(block, modal);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1), // summary line
+        Constraint::Length(1), // spacer
+        Constraint::Min(1),    // results
+        Constraint::Length(1), // hints
+    ])
+    .split(inner);
+
+    // Summary line: 'foo' → 'bar' in scope/path
+    let dim = Style::default().fg(Color::DarkGray);
+    let summary = Line::from(vec![
+        Span::styled("'", dim),
+        Span::styled(
+            app.replace_query.clone(),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("' → '", dim),
+        Span::styled(
+            if app.replace_target.is_empty() {
+                "(empty — delete matches)".to_string()
+            } else {
+                app.replace_target.clone()
+            },
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("' in ", dim),
+        Span::styled(app.replace_scope_label(), Style::default().fg(Color::Cyan)),
+    ]);
+    f.render_widget(Paragraph::new(summary), chunks[0]);
+
+    // Scrolling viewport for the list.
+    let view_h = chunks[2].height as usize;
+    let start = if view_h == 0 {
+        0
+    } else if selected >= view_h {
+        selected + 1 - view_h
+    } else {
+        0
+    };
+    let end = (start + view_h).min(total);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
+    for row_idx in start..end {
+        let m = &app.replace_matches[row_idx];
+        let is_checked = app.replace_checked.get(row_idx).copied().unwrap_or(false);
+        let is_selected = row_idx == selected;
+        let row_bg = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let mark = if is_checked { "✓" } else { " " };
+        let mark_color = if is_checked {
+            Color::Green
+        } else {
+            Color::DarkGray
+        };
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        // Selection caret + checkbox.
+        spans.push(Span::styled(
+            if is_selected { " ▶ " } else { "   " },
+            row_bg,
+        ));
+        spans.push(Span::styled(
+            format!("[{mark}] "),
+            if is_selected {
+                row_bg.add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(mark_color).add_modifier(Modifier::BOLD)
+            },
+        ));
+        // Path:line — magenta path, cyan line number.
+        spans.push(Span::styled(
+            format!("{}:{}", m.rel_path, m.line),
+            if is_selected {
+                row_bg
+            } else {
+                Style::default().fg(Color::Magenta)
+            },
+        ));
+        spans.push(Span::raw("  "));
+        // Line context with the match highlighted.
+        let line = &m.line_text;
+        let end_byte = m.col_byte + app.replace_query.len();
+        let before = line.get(..m.col_byte).unwrap_or("");
+        let hit = line.get(m.col_byte..end_byte).unwrap_or("");
+        let after = line.get(end_byte..).unwrap_or("");
+        // Trim long lines to fit. Keep ~30 chars on each side of the match.
+        let (before, after) = trim_context(before, after, 30);
+        spans.push(Span::styled(before, row_bg));
+        spans.push(Span::styled(
+            hit.to_string(),
+            if is_selected {
+                row_bg.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            },
+        ));
+        spans.push(Span::styled(after, row_bg));
+        lines.push(Line::from(spans));
+    }
+    if lines.is_empty() {
+        lines.push(Line::styled("  (no matches)", dim));
+    }
+    f.render_widget(Paragraph::new(lines), chunks[2]);
+
+    let hints = Line::from(vec![
+        Span::styled("Space ", Style::default().fg(Color::Yellow)),
+        Span::styled("toggle  ", dim),
+        Span::styled("a ", Style::default().fg(Color::Yellow)),
+        Span::styled("all  ", dim),
+        Span::styled("z ", Style::default().fg(Color::Yellow)),
+        Span::styled("none  ", dim),
+        Span::styled("↑/↓ ", Style::default().fg(Color::Yellow)),
+        Span::styled("move  ", dim),
+        Span::styled("Enter ", Style::default().fg(Color::Green)),
+        Span::styled("apply  ", dim),
+        Span::styled("Esc ", Style::default().fg(Color::Red)),
+        Span::styled("cancel", dim),
+    ]);
+    f.render_widget(Paragraph::new(hints), chunks[3]);
+}
+
+/// Truncate `before`/`after` context strings around a match so each fits in
+/// roughly `pad` chars. Front-ellipsizes the "before" side and back-ellipsizes
+/// the "after" side so the matched substring stays visible.
+fn trim_context(before: &str, after: &str, pad: usize) -> (String, String) {
+    let b_chars: Vec<char> = before.chars().collect();
+    let a_chars: Vec<char> = after.chars().collect();
+    let b_out = if b_chars.len() > pad {
+        let tail: String = b_chars[b_chars.len() - pad..].iter().collect();
+        format!("…{tail}")
+    } else {
+        before.to_string()
+    };
+    let a_out = if a_chars.len() > pad {
+        let head: String = a_chars[..pad].iter().collect();
+        format!("{head}…")
+    } else {
+        after.to_string()
+    };
+    (b_out, a_out)
 }
 
 /// Render setup/add root dialog.

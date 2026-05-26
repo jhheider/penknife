@@ -193,6 +193,31 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Mode::ResolveAmbiguous { item, selected } => {
             dialogs::render_resolve_ambiguous(f, f.area(), app, *item, *selected);
         }
+        Mode::ReplaceQuery => {
+            dialogs::render_input_dialog(
+                f,
+                f.area(),
+                &format!("Replace in {}", app.replace_scope_label()),
+                "Search for (exact match):",
+                &app.input_editor,
+            );
+        }
+        Mode::ReplaceTarget => {
+            dialogs::render_input_dialog(
+                f,
+                f.area(),
+                &format!(
+                    "Replace '{}' in {}",
+                    app.replace_query,
+                    app.replace_scope_label()
+                ),
+                "Replace with:",
+                &app.input_editor,
+            );
+        }
+        Mode::ReplaceReview { selected } => {
+            dialogs::render_replace_review(f, f.area(), app, *selected);
+        }
         _ => {}
     }
 }
