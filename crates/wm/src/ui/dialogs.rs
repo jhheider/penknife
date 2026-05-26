@@ -51,7 +51,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("o", "Open gist URL in browser"),
                 ("e", "Edit selected file in $EDITOR"),
                 ("m", "Rename / move the selected file"),
-                ("=", "Format file in place (currently: prettify JSON)"),
+                ("=", "Toggle JSON between compact and pretty in place"),
                 ("X", "Delete remote gist (keeps local file)"),
                 ("_", "Move local file to system trash (with confirm)"),
                 ("D", "Diff local vs remote"),

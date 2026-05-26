@@ -1373,10 +1373,12 @@ impl App {
 
     // ── Format in place ─────────────────────────────────────────────────────
 
-    /// Reformat the selected file to its canonical pretty form, writing back
-    /// to disk. Currently only `.json` is supported (parse + `to_string_pretty`).
-    /// If the file isn't supported or fails to parse, the file is left alone
-    /// and the status bar explains why.
+    /// Toggle the selected file between canonical compact and pretty form,
+    /// writing back to disk. Direction is decided by comparing the file to
+    /// its compact serialization: if they match, prettify; otherwise compact.
+    /// Any "almost compact" intermediate (stray spaces, etc.) is normalized
+    /// to compact on the first press; a second press flips to pretty.
+    /// Currently only `.json` is supported.
     fn do_format_in_place(&mut self) {
         let Some(rel) = self.selected_file() else {
             self.status_message = "No file selected.".into();
@@ -1405,26 +1407,36 @@ impl App {
                 return;
             }
         };
-        let pretty = match serde_json::to_string_pretty(&value) {
+        let compact = match serde_json::to_string(&value) {
             Ok(s) => s,
             Err(e) => {
                 self.status_message = format!("Serialize failed: {e}");
                 return;
             }
         };
-        // Preserve a trailing newline if the original had one (or wasn't empty).
-        let with_newline = if pretty.ends_with('\n') {
-            pretty
+        // The file is "canonical compact" iff it equals the compact form,
+        // optionally with a single trailing newline.
+        let is_compact = content == compact || content == format!("{compact}\n");
+
+        let (new_text, verb) = if is_compact {
+            let pretty = match serde_json::to_string_pretty(&value) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.status_message = format!("Serialize failed: {e}");
+                    return;
+                }
+            };
+            (format!("{pretty}\n"), "Prettified")
         } else {
-            format!("{pretty}\n")
+            (format!("{compact}\n"), "Compacted")
         };
-        if with_newline == content {
+
+        if new_text == content {
             self.status_message = format!("{rel}: already canonical.");
             return;
         }
-        let before = content.len();
-        let after = with_newline.len();
-        if let Err(e) = std::fs::write(&abs, &with_newline) {
+        let delta = new_text.len() as isize - content.len() as isize;
+        if let Err(e) = std::fs::write(&abs, &new_text) {
             self.status_message = format!("Write failed: {e}");
             return;
         }
@@ -1434,9 +1446,8 @@ impl App {
         }
         self.update_preview();
         self.update_status();
-        let delta = after as isize - before as isize;
         let sign = if delta >= 0 { "+" } else { "" };
-        self.status_message = format!("Formatted {rel} ({sign}{delta} bytes)");
+        self.status_message = format!("{verb} {rel} ({sign}{delta} bytes)");
     }
 
     // ── Rename / move ───────────────────────────────────────────────────────
