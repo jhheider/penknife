@@ -158,7 +158,7 @@ struct StatusCounts {
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
-    'H', 'r', 'R', 'I', 's', 'm',
+    'H', 'r', 'R', 'I', 's', 'm', '=',
 ];
 
 impl App {
@@ -958,6 +958,7 @@ impl App {
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
             KeyCode::Char('_') => self.confirm_trash_local(),
             KeyCode::Char('m') => self.start_rename(),
+            KeyCode::Char('=') => self.do_format_in_place(),
             KeyCode::Char('s') => self.start_replace(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_hydration();
@@ -1368,6 +1369,74 @@ impl App {
                 self.status_message = format!("Trash failed: {e}");
             }
         }
+    }
+
+    // ── Format in place ─────────────────────────────────────────────────────
+
+    /// Reformat the selected file to its canonical pretty form, writing back
+    /// to disk. Currently only `.json` is supported (parse + `to_string_pretty`).
+    /// If the file isn't supported or fails to parse, the file is left alone
+    /// and the status bar explains why.
+    fn do_format_in_place(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            self.status_message = "No file selected.".into();
+            return;
+        };
+        let ext = std::path::Path::new(&rel)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        if ext != "json" {
+            self.status_message = format!("Format not supported for .{ext} files.");
+            return;
+        }
+        let abs = self.abs_path(&rel);
+        let content = match std::fs::read_to_string(&abs) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status_message = format!("Read error: {e}");
+                return;
+            }
+        };
+        let value: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                self.status_message = format!("Invalid JSON, not formatted: {e}");
+                return;
+            }
+        };
+        let pretty = match serde_json::to_string_pretty(&value) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status_message = format!("Serialize failed: {e}");
+                return;
+            }
+        };
+        // Preserve a trailing newline if the original had one (or wasn't empty).
+        let with_newline = if pretty.ends_with('\n') {
+            pretty
+        } else {
+            format!("{pretty}\n")
+        };
+        if with_newline == content {
+            self.status_message = format!("{rel}: already canonical.");
+            return;
+        }
+        let before = content.len();
+        let after = with_newline.len();
+        if let Err(e) = std::fs::write(&abs, &with_newline) {
+            self.status_message = format!("Write failed: {e}");
+            return;
+        }
+        if let Err(e) = self.refresh_files() {
+            self.status_message = format!("Formatted but refresh failed: {e}");
+            return;
+        }
+        self.update_preview();
+        self.update_status();
+        let delta = after as isize - before as isize;
+        let sign = if delta >= 0 { "+" } else { "" };
+        self.status_message = format!("Formatted {rel} ({sign}{delta} bytes)");
     }
 
     // ── Rename / move ───────────────────────────────────────────────────────
