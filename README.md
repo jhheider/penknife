@@ -64,6 +64,7 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `o` | Normal | Open gist URL in the system browser |
 | `e` | Normal | Edit selected file in `$EDITOR` (TUI suspends, then refreshes) |
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
+| `_` | Normal | Move local file to the system trash (with confirmation) |
 | `H` | Normal | Hydrate — match existing gists to files |
 | `I` | Normal | Import a Google Doc as markdown |
 | `R` | Normal | Switch root directory |

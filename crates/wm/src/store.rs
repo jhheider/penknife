@@ -86,6 +86,14 @@ impl Store {
         self.roots.entry(key).or_default().insert(rel_path, entry);
     }
 
+    /// Drop a single (root, rel_path) entry. No-op if it didn't exist.
+    pub fn remove(&mut self, root: &Path, rel_path: &str) {
+        let key = canonicalize_root(root);
+        if let Some(map) = self.roots.get_mut(&key) {
+            map.remove(rel_path);
+        }
+    }
+
     pub fn files_for_root(&self, root: &Path) -> Option<&BTreeMap<String, FileEntry>> {
         let key = canonicalize_root(root);
         self.roots.get(&key)

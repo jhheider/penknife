@@ -59,6 +59,10 @@ pub enum ConfirmAction {
         root: PathBuf,
         gist_id: String,
     },
+    TrashLocal {
+        rel_path: String,
+        root: PathBuf,
+    },
 }
 
 pub struct App {
@@ -638,6 +642,9 @@ impl App {
                     root,
                     gist_id,
                 } => self.do_delete_remote(rel_path, root, gist_id),
+                ConfirmAction::TrashLocal { rel_path, root } => {
+                    self.do_trash_local(rel_path, root);
+                }
             }
         }
         self.mode = Mode::Normal;
@@ -863,6 +870,7 @@ impl App {
                 self.jump_to_next_dirty(false);
             }
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
+            KeyCode::Char('_') => self.confirm_trash_local(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_hydration();
             }
@@ -1209,6 +1217,53 @@ impl App {
                 result,
             });
         });
+    }
+
+    /// Prompt to move the selected file to the OS trash. The remote gist (if
+    /// any) is left intact — restore-from-trash + hydration will re-link it.
+    fn confirm_trash_local(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            return;
+        };
+        let Some(root) = self.current_root().cloned() else {
+            return;
+        };
+        let has_gist = self.store.get(&root, &rel).is_some();
+        let suffix = if has_gist {
+            " The remote gist is kept; the mapping is dropped."
+        } else {
+            ""
+        };
+        self.mode = Mode::Confirm {
+            message: format!("Move {rel} to the system trash?{suffix}"),
+            action: ConfirmAction::TrashLocal {
+                rel_path: rel,
+                root,
+            },
+        };
+    }
+
+    /// Actually trash the file and prune its store mapping. Synchronous —
+    /// `trash::delete` is a quick OS call.
+    fn do_trash_local(&mut self, rel_path: String, root: PathBuf) {
+        let abs = root.join(&rel_path);
+        match trash::delete(&abs) {
+            Ok(()) => {
+                self.store.remove(&root, &rel_path);
+                if let Err(e) = self.store.save() {
+                    self.status_message = format!("Trashed but store save failed: {e}");
+                    return;
+                }
+                if let Err(e) = self.refresh_files() {
+                    self.status_message = format!("Trashed but refresh failed: {e}");
+                    return;
+                }
+                self.status_message = format!("Moved {rel_path} to trash.");
+            }
+            Err(e) => {
+                self.status_message = format!("Trash failed: {e}");
+            }
+        }
     }
 
     /// Move the tree selection to the next file whose sync status is anything

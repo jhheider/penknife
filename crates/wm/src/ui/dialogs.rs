@@ -51,6 +51,7 @@ pub fn render_help(f: &mut Frame, area: Rect) {
                 ("o", "Open gist URL in browser"),
                 ("e", "Edit selected file in $EDITOR"),
                 ("X", "Delete remote gist (keeps local file)"),
+                ("_", "Move local file to system trash (with confirm)"),
                 ("D", "Diff local vs remote"),
                 ("H", "Hydrate — match existing gists to files"),
             ],

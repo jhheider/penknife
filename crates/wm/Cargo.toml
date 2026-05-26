@@ -19,6 +19,7 @@ arboard = "3"
 htmd = "0.5"
 open = "5"
 nucleo-matcher = "0.3"
+trash = "5"
 chrono = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 color-eyre = "0.6"
