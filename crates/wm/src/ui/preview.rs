@@ -62,7 +62,19 @@ fn highlight(content: &str) -> Vec<Line<'static>> {
             i += consumed;
             continue;
         }
-        out.push(highlight_line(line, trimmed));
+        // Inline <br> support: split the source line into visual sub-lines.
+        // The first piece keeps the original leading whitespace; subsequent
+        // pieces start fresh (a <br> doesn't preserve indentation).
+        let pieces = split_br(line);
+        for (n, sub) in pieces.iter().enumerate() {
+            let s = if n == 0 {
+                sub.as_str()
+            } else {
+                sub.trim_start()
+            };
+            let sub_trimmed = s.trim_start();
+            out.push(highlight_line(s, sub_trimmed));
+        }
         i += 1;
     }
     out
@@ -84,13 +96,18 @@ fn try_render_table(lines: &[&str], start: usize, out: &mut Vec<Line<'static>>) 
         return None;
     }
 
-    let header_cells = split_cells(header_raw);
+    // Each cell becomes a Vec<String> of sub-lines (split on inline <br>).
+    // A row is Vec<cell-sub-lines>; the table is header + body of such rows.
+    let header_cells: Vec<Vec<String>> = split_cells(header_raw)
+        .into_iter()
+        .map(|c| split_br(&c))
+        .collect();
     let col_count = header_cells.len();
     if col_count == 0 {
         return None;
     }
 
-    let mut body: Vec<Vec<String>> = Vec::new();
+    let mut body: Vec<Vec<Vec<String>>> = Vec::new();
     let mut idx = start + 2;
     while idx < lines.len() {
         let row = lines[idx].trim();
@@ -98,24 +115,26 @@ fn try_render_table(lines: &[&str], start: usize, out: &mut Vec<Line<'static>>) 
             break;
         }
         let mut cells = split_cells(row);
-        // Pad or truncate body rows so they always match column count.
         cells.resize(col_count, String::new());
-        body.push(cells);
+        let split: Vec<Vec<String>> = cells.iter().map(|c| split_br(c)).collect();
+        body.push(split);
         idx += 1;
     }
 
-    // Column widths: max of header and any body cell in that column. Width
-    // is measured in *visible* chars (after stripping inline-markdown delimiters)
-    // so padding still aligns once inline parsing runs on body cells.
-    let mut widths: Vec<usize> = header_cells.iter().map(|c| visible_width(c)).collect();
-    for row in &body {
-        for (j, cell) in row.iter().enumerate() {
-            if j < widths.len() {
-                widths[j] = widths[j].max(visible_width(cell));
+    // Column widths: max visible width across all sub-lines of every cell in
+    // that column (header + body).
+    let mut widths: Vec<usize> = vec![1; col_count];
+    let measure = |sub_lines: &Vec<Vec<String>>, widths: &mut Vec<usize>| {
+        for (j, cell_subs) in sub_lines.iter().enumerate() {
+            for s in cell_subs {
+                widths[j] = widths[j].max(visible_width(s));
             }
         }
+    };
+    measure(&header_cells, &mut widths);
+    for row in &body {
+        measure(row, &mut widths);
     }
-    // Floor width so empty cells still get a single padding column.
     for w in widths.iter_mut() {
         *w = (*w).max(1);
     }
@@ -130,13 +149,13 @@ fn try_render_table(lines: &[&str], start: usize, out: &mut Vec<Line<'static>>) 
         border_row("┌", "┬", "┐", &widths),
         border_style,
     ));
-    out.push(render_row(&header_cells, &widths, &sep, Some(header_style)));
+    render_logical_row(&header_cells, &widths, &sep, Some(header_style), out);
     out.push(Line::styled(
         border_row("├", "┼", "┤", &widths),
         border_style,
     ));
     for row in &body {
-        out.push(render_row(row, &widths, &sep, None));
+        render_logical_row(row, &widths, &sep, None, out);
     }
     out.push(Line::styled(
         border_row("└", "┴", "┘", &widths),
@@ -144,6 +163,26 @@ fn try_render_table(lines: &[&str], start: usize, out: &mut Vec<Line<'static>>) 
     ));
 
     Some(idx - start)
+}
+
+/// Render one logical row (which may have cells of differing height because
+/// of inline `<br>`) by emitting `max_height` visual lines. Cells with fewer
+/// sub-lines pad blank on the trailing visual rows.
+fn render_logical_row(
+    cells: &[Vec<String>],
+    widths: &[usize],
+    sep: &Span<'static>,
+    force_style: Option<Style>,
+    out: &mut Vec<Line<'static>>,
+) {
+    let height = cells.iter().map(|c| c.len().max(1)).max().unwrap_or(1);
+    for vl in 0..height {
+        let row: Vec<String> = cells
+            .iter()
+            .map(|c| c.get(vl).cloned().unwrap_or_default())
+            .collect();
+        out.push(render_row(&row, widths, sep, force_style));
+    }
 }
 
 fn is_table_row(line: &str) -> bool {
@@ -169,6 +208,52 @@ fn is_table_separator(line: &str) -> bool {
 fn split_cells(line: &str) -> Vec<String> {
     let trimmed = line.trim().trim_start_matches('|').trim_end_matches('|');
     trimmed.split('|').map(|c| c.trim().to_string()).collect()
+}
+
+/// Split `text` on inline `<br>` tags (case-insensitive, with optional self-
+/// closing slash and surrounding whitespace: `<br>`, `<br/>`, `<br />`, `<BR>`).
+/// Returns at least one element — the original text if no tags were found.
+/// Used for both body content (line continuations) and table cells (multi-
+/// line cells).
+fn split_br(text: &str) -> Vec<String> {
+    if !text.contains('<') && !text.contains('＜') {
+        return vec![text.to_string()];
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut buf = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '<' {
+            // Try to match "<br" then optional whitespace, optional "/", more
+            // whitespace, then ">".
+            let next1 = chars.get(i + 1).copied();
+            let next2 = chars.get(i + 2).copied();
+            if next1.is_some_and(|c| c.eq_ignore_ascii_case(&'b'))
+                && next2.is_some_and(|c| c.eq_ignore_ascii_case(&'r'))
+            {
+                let mut j = i + 3;
+                while j < chars.len() && chars[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '/' {
+                    j += 1;
+                    while j < chars.len() && chars[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                }
+                if j < chars.len() && chars[j] == '>' {
+                    out.push(std::mem::take(&mut buf));
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        buf.push(chars[i]);
+        i += 1;
+    }
+    out.push(buf);
+    out
 }
 
 /// Visible width of a cell after inline-markdown parsing strips delimiters.
@@ -455,6 +540,62 @@ mod tests {
         assert_eq!(lines.len(), 2);
         let first: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(first.contains('|'));
+    }
+
+    #[test]
+    fn split_br_handles_common_variants() {
+        assert_eq!(split_br("a<br>b"), vec!["a", "b"]);
+        assert_eq!(split_br("a<br/>b"), vec!["a", "b"]);
+        assert_eq!(split_br("a<br />b"), vec!["a", "b"]);
+        assert_eq!(split_br("a<BR>b"), vec!["a", "b"]);
+        assert_eq!(split_br("no breaks"), vec!["no breaks"]);
+        // Trailing <br> produces an empty trailing element (intentional).
+        assert_eq!(split_br("end<br>"), vec!["end", ""]);
+        // Non-br tag stays as literal text.
+        assert_eq!(split_br("<b>not a br</b>"), vec!["<b>not a br</b>"]);
+    }
+
+    #[test]
+    fn body_line_with_br_emits_multiple_visual_lines() {
+        let md = "first<br>second<br>third";
+        let lines = highlight(md);
+        assert_eq!(lines.len(), 3);
+        let text: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert_eq!(text, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn table_cell_br_expands_row_height() {
+        // Right cell has 3 sub-lines, left has 1 — row should render as 3 visual
+        // body lines, with the left cell padded blank on rows 2 and 3.
+        let md = "| Name | Stats |\n|---|---|\n| Goblin | HP: 7<br>AC: 15<br>STR: 8 |\n";
+        let lines = highlight(md);
+        // top + header + mid + 3 body + bottom = 7
+        assert_eq!(lines.len(), 7);
+        let body_widths: Vec<usize> = lines[3..6]
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.chars().count())
+                    .sum::<usize>()
+            })
+            .collect();
+        // All three body visual rows align to the same total width.
+        let first = body_widths[0];
+        assert!(
+            body_widths.iter().all(|&w| w == first),
+            "body widths: {body_widths:?}"
+        );
+        // The second and third visual body rows should contain "AC:" and "STR:"
+        // somewhere in their content (the right cell continues).
+        let row2_text: String = lines[4].spans.iter().map(|s| s.content.as_ref()).collect();
+        let row3_text: String = lines[5].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(row2_text.contains("AC: 15"));
+        assert!(row3_text.contains("STR: 8"));
     }
 
     #[test]
