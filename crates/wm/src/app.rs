@@ -191,6 +191,12 @@ pub struct App {
     /// `refresh_git_status` on root switch and on `r`.
     pub git_repo_root: Option<PathBuf>,
     pub git_statuses: std::collections::HashMap<String, crate::git::GitStatus>,
+    /// Per-file sync status, populated once per `refresh_files`. Computing
+    /// status requires a disk read + SHA-256, so this cache lets the
+    /// tree-render, sort-by-status, status-counts, and bulk-menu paths all
+    /// reuse one pass instead of each doing their own ~N reads per call.
+    /// Keyed by rel_path. Files not in this map are treated as `NotGisted`.
+    pub status_cache: std::collections::HashMap<String, sync::SyncStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -301,6 +307,7 @@ impl App {
             replace_checked: Vec::new(),
             git_repo_root: None,
             git_statuses: std::collections::HashMap::new(),
+            status_cache: std::collections::HashMap::new(),
         };
         // Populate git status before the first tree build so leaf glyphs
         // show the right state without needing an explicit refresh first.
@@ -349,14 +356,8 @@ impl App {
     }
 
     pub fn rebuild_tree(&mut self) {
-        let root = self.current_root().cloned();
         self.apply_sort();
-        let built = tree::build_tree(
-            &self.files,
-            &self.store,
-            root.as_deref(),
-            &self.git_statuses,
-        );
+        let built = tree::build_tree(&self.files, &self.status_cache, &self.git_statuses);
         self.tree_items = built.items;
         self.tree_identifiers = built.identifiers;
         self.tree_file_ids = built.file_ids;
@@ -380,10 +381,12 @@ impl App {
                 self.files.sort_by(|a, b| b.rel_path.cmp(&a.rel_path));
             }
             SortMode::Status => {
-                let root = self.current_root().cloned();
+                // Status rank uses the cached per-file sync state — no
+                // disk reads inside the sort comparator.
+                let cache = &self.status_cache;
                 self.files.sort_by(|a, b| {
-                    let sa = status_rank(a, &self.store, root.as_deref());
-                    let sb = status_rank(b, &self.store, root.as_deref());
+                    let sa = status_rank_cached(cache.get(&a.rel_path).copied());
+                    let sb = status_rank_cached(cache.get(&b.rel_path).copied());
                     sa.cmp(&sb).then_with(|| b.modified.cmp(&a.modified))
                 });
             }
@@ -392,15 +395,61 @@ impl App {
 
     pub fn refresh_files(&mut self) -> Result<()> {
         if let Some(entry) = self.current_root_entry().cloned() {
+            // Surface a missing root explicitly. Without this check the
+            // scanner silently returns an empty list (its error tolerance is
+            // tuned for "this subdir vanished mid-walk," not "the root
+            // itself is gone") and the user sees an empty tree with no
+            // explanation.
+            if !entry.path.exists() {
+                self.status_message =
+                    format!("Root missing: {} (check config.toml)", entry.path.display());
+                self.files.clear();
+                self.status_cache.clear();
+                self.git_statuses.clear();
+                self.git_repo_root = None;
+                self.rebuild_tree();
+                return Ok(());
+            }
             let ignore = scanner::build_globset(&entry.ignore);
             self.files = scanner::scan_directory(&entry.path, &ignore)?;
         } else {
             self.files.clear();
         }
+        self.refresh_status_cache();
         self.refresh_git_status();
         self.rebuild_tree();
         self.update_preview();
         Ok(())
+    }
+
+    /// Read each scanned file once, compute its sync status, and cache the
+    /// result. Subsequent calls in this refresh cycle (tree render, sort,
+    /// dashboard counts, bulk menu) read from the cache instead of repeating
+    /// the IO. Must be called *after* `self.files` is populated.
+    fn refresh_status_cache(&mut self) {
+        self.status_cache.clear();
+        let Some(root) = self.current_root().cloned() else {
+            return;
+        };
+        self.status_cache.reserve(self.files.len());
+        for f in &self.files {
+            let entry = self.store.get(&root, &f.rel_path);
+            let status = if entry.is_some() {
+                let content = std::fs::read_to_string(&f.abs_path).unwrap_or_default();
+                sync::local_status(&content, entry)
+            } else {
+                sync::SyncStatus::NotGisted
+            };
+            self.status_cache.insert(f.rel_path.clone(), status);
+        }
+    }
+
+    /// Cache lookup; defaults to NotGisted for paths not in the cache.
+    pub fn cached_status(&self, rel_path: &str) -> sync::SyncStatus {
+        self.status_cache
+            .get(rel_path)
+            .copied()
+            .unwrap_or(sync::SyncStatus::NotGisted)
     }
 
     /// Re-query git for the active root's state. Quietly clears the status
@@ -543,12 +592,9 @@ impl App {
                 .as_ref()
                 .and_then(|r| self.store.get(r, rel))
                 .cloned();
-            let status = if entry.is_some() {
-                let content = std::fs::read_to_string(self.abs_path(rel)).unwrap_or_default();
-                sync::local_status(&content, entry.as_ref())
-            } else {
-                sync::SyncStatus::NotGisted
-            };
+            // Cached status — populated in refresh_files. One disk read per
+            // file per refresh instead of one per status-bar update.
+            let status = self.cached_status(rel);
             self.status_color = status.color();
             let url = entry.as_ref().map(|e| e.url.as_str()).unwrap_or("no gist");
             self.status_message = format!("{} {} | {url}", status.icon(), rel);
@@ -680,22 +726,15 @@ impl App {
     }
 
     /// Tally the current set of files by sync status. Used by the status bar
-    /// dashboard and the jump-to-next-dirty navigation.
+    /// dashboard. Reads from `status_cache` so no disk IO happens here.
     fn status_counts(&self) -> StatusCounts {
         let mut c = StatusCounts::default();
-        let Some(root) = self.current_root() else {
+        if self.current_root().is_none() {
             c.not_gisted = self.files.len();
             return c;
-        };
+        }
         for file in &self.files {
-            let s = match self.store.get(root, &file.rel_path) {
-                Some(entry) => {
-                    let content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
-                    sync::local_status(&content, Some(entry))
-                }
-                None => sync::SyncStatus::NotGisted,
-            };
-            match s {
+            match self.cached_status(&file.rel_path) {
                 sync::SyncStatus::Synced => c.synced += 1,
                 sync::SyncStatus::LocalNewer => c.local_newer += 1,
                 sync::SyncStatus::RemoteNewer => c.remote_newer += 1,
@@ -860,7 +899,20 @@ impl App {
             return;
         };
         let action_copy = action.clone();
-        if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+        let confirmed = matches!(
+            key.code,
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter
+        );
+        let cancelled = matches!(
+            key.code,
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q')
+        );
+        // Stray keys (spacebar, arrow keys, random letters) leave the dialog
+        // alone — only an explicit confirm/cancel dismisses.
+        if !confirmed && !cancelled {
+            return;
+        }
+        if confirmed {
             match action_copy {
                 ConfirmAction::SyncDown => self.do_sync_down(),
                 ConfirmAction::DeleteRemote {
@@ -1950,9 +2002,9 @@ impl App {
     /// Move the tree selection to the next file whose sync status is anything
     /// other than `Synced`. `forward` controls direction. Wraps once.
     fn jump_to_next_dirty(&mut self, forward: bool) {
-        let Some(root) = self.current_root().cloned() else {
+        if self.current_root().is_none() {
             return;
-        };
+        }
         if self.files.is_empty() {
             return;
         }
@@ -1981,14 +2033,7 @@ impl App {
                 ((cur_idx - step).rem_euclid(n)) as usize
             };
             let file = &self.files[probe];
-            let status = match self.store.get(&root, &file.rel_path) {
-                Some(entry) => {
-                    let content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
-                    sync::local_status(&content, Some(entry))
-                }
-                None => sync::SyncStatus::NotGisted,
-            };
-            if !matches!(status, sync::SyncStatus::Synced) {
+            if !matches!(self.cached_status(&file.rel_path), sync::SyncStatus::Synced) {
                 next = Some(file.rel_path.clone());
                 break;
             }
@@ -2419,33 +2464,27 @@ impl App {
     /// the set of rel_paths it would touch (so the user sees an accurate count
     /// in the menu and in the confirm dialog).
     pub fn bulk_options(&self) -> Vec<BulkAction> {
-        use crate::config::SortMode;
-        let _ = SortMode::MtimeDesc; // keep import locality clear
         let mut push_dirty: Vec<String> = Vec::new();
         let mut pull_newer: Vec<String> = Vec::new();
         let mut format_json: Vec<String> = Vec::new();
-        if let Some(root) = self.current_root() {
+        if self.current_root().is_some() {
             for f in &self.files {
-                let entry = self.store.get(root, &f.rel_path);
-                let content = std::fs::read_to_string(&f.abs_path).unwrap_or_default();
-                let status = if entry.is_some() {
-                    sync::local_status(&content, entry)
-                } else {
-                    sync::SyncStatus::NotGisted
-                };
-                match status {
+                match self.cached_status(&f.rel_path) {
                     sync::SyncStatus::LocalNewer
                     | sync::SyncStatus::Conflict
                     | sync::SyncStatus::NotGisted => push_dirty.push(f.rel_path.clone()),
                     sync::SyncStatus::RemoteNewer => pull_newer.push(f.rel_path.clone()),
                     sync::SyncStatus::Synced => {}
                 }
+                // The JSON canonicality check still needs a fresh read since
+                // we don't cache file content. This branch only fires on
+                // .json files (13 in the current corpus), so it's cheap.
                 if f.rel_path.ends_with(".json")
+                    && let Ok(content) = std::fs::read_to_string(&f.abs_path)
                     && let Ok(value) = serde_json::from_str::<serde_json::Value>(&content)
                 {
                     let compact = serde_json::to_string(&value).unwrap_or_default();
                     if content != compact && content != format!("{compact}\n") {
-                        // It's not compact; but is it already canonical-pretty?
                         let pretty = serde_json::to_string_pretty(&value).unwrap_or_default();
                         if content != pretty && content != format!("{pretty}\n") {
                             format_json.push(f.rel_path.clone());
@@ -2593,16 +2632,11 @@ impl App {
     }
 }
 
-/// Bucket a file by sync status for sort ordering. Lower = appears first.
-fn status_rank(file: &ScannedFile, store: &Store, root: Option<&Path>) -> u8 {
-    let entry = root.and_then(|r| store.get(r, &file.rel_path));
-    let status = if let Some(e) = entry {
-        let content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
-        sync::local_status(&content, Some(e))
-    } else {
-        sync::SyncStatus::NotGisted
-    };
-    match status {
+/// Bucket a cached sync status for sort ordering. Lower = appears first.
+/// Files missing from the cache (e.g. newly-added between refreshes) sort
+/// as NotGisted.
+fn status_rank_cached(status: Option<sync::SyncStatus>) -> u8 {
+    match status.unwrap_or(sync::SyncStatus::NotGisted) {
         sync::SyncStatus::Conflict => 0,
         sync::SyncStatus::LocalNewer => 1,
         sync::SyncStatus::RemoteNewer => 2,

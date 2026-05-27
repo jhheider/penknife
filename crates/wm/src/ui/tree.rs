@@ -1,13 +1,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
 
 use ratatui::prelude::*;
 use tui_tree_widget::TreeItem;
 
 use crate::git::GitStatus;
 use crate::scanner::ScannedFile;
-use crate::store::Store;
-use crate::sync::{self, SyncStatus};
+use crate::sync::SyncStatus;
 
 /// Result of building the tree: the widget items, the flat list of all
 /// identifiers (files + directories), and the subset that are file leaves.
@@ -28,11 +26,12 @@ struct Node<'a> {
 
 /// Build a hierarchical tree of items from scanned files. Supports arbitrary
 /// directory depth — components are walked recursively rather than truncated.
-/// `git_statuses` is optional per-file git state; empty map = no git column.
+/// `status_cache` carries the precomputed per-file sync status (so the tree
+/// build doesn't re-read every file). `git_statuses` is optional per-file
+/// git state; empty map = no git column.
 pub fn build_tree<'a>(
     files: &[ScannedFile],
-    store: &Store,
-    root: Option<&Path>,
+    status_cache: &HashMap<String, SyncStatus>,
     git_statuses: &HashMap<String, GitStatus>,
 ) -> BuiltTree<'a> {
     let mut root_node: Node = Node::default();
@@ -53,8 +52,7 @@ pub fn build_tree<'a>(
     let items = render_node(
         &root_node,
         "",
-        store,
-        root,
+        status_cache,
         git_statuses,
         &mut identifiers,
         &mut file_ids,
@@ -70,8 +68,7 @@ pub fn build_tree<'a>(
 fn render_node<'a>(
     node: &Node,
     prefix: &str,
-    store: &Store,
-    root: Option<&Path>,
+    status_cache: &HashMap<String, SyncStatus>,
     git_statuses: &HashMap<String, GitStatus>,
     identifiers: &mut Vec<String>,
     file_ids: &mut HashSet<String>,
@@ -88,8 +85,7 @@ fn render_node<'a>(
         let children = render_node(
             child,
             &dir_id,
-            store,
-            root,
+            status_cache,
             git_statuses,
             identifiers,
             file_ids,
@@ -102,7 +98,10 @@ fn render_node<'a>(
 
     // Then files (preserve scanner-supplied order = mtime desc).
     for file in &node.files {
-        let status = file_status(file, store, root);
+        let status = status_cache
+            .get(&file.rel_path)
+            .copied()
+            .unwrap_or(SyncStatus::NotGisted);
         let git = git_statuses.get(&file.rel_path).copied();
         let label = format_leaf(&file.rel_path, status, git);
         let id = file.rel_path.clone();
@@ -114,21 +113,14 @@ fn render_node<'a>(
     items
 }
 
-fn file_status(file: &ScannedFile, store: &Store, root: Option<&Path>) -> SyncStatus {
-    let entry = root.and_then(|r| store.get(r, &file.rel_path));
-    if entry.is_none() {
-        return SyncStatus::NotGisted;
-    }
-    let content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
-    sync::local_status(&content, entry)
-}
-
 fn format_leaf(rel_path: &str, status: SyncStatus, git: Option<GitStatus>) -> Line<'static> {
-    let name = rel_path
-        .rsplit('/')
-        .next()
-        .unwrap_or(rel_path)
-        .trim_end_matches(".md");
+    let basename = rel_path.rsplit('/').next().unwrap_or(rel_path);
+    // Strip the last extension uniformly (.md, .json, …). The tree icon
+    // already signals "this is a writing"; the extension is noise.
+    let name = match basename.rfind('.') {
+        Some(idx) if idx > 0 => &basename[..idx],
+        _ => basename,
+    };
     let g = crate::glyphs::glyphs();
     let icon = format!("{} ", status.icon());
 
@@ -181,8 +173,7 @@ mod tests {
     #[test]
     fn deep_paths_nest_recursively() {
         let files = vec![sf("a/b/c/d.md"), sf("a/b/c/e.md"), sf("a/f.md")];
-        let store = Store::default();
-        let built = build_tree(&files, &store, None, &HashMap::new());
+        let built = build_tree(&files, &HashMap::new(), &HashMap::new());
         // Top-level should have exactly one directory entry ("a"); identifiers
         // should include each directory level ("a", "a/b", "a/b/c").
         assert_eq!(built.items.len(), 1);
@@ -196,8 +187,7 @@ mod tests {
     #[test]
     fn root_level_files_appear_at_top() {
         let files = vec![sf("README.md"), sf("notes/today.md")];
-        let store = Store::default();
-        let built = build_tree(&files, &store, None, &HashMap::new());
+        let built = build_tree(&files, &HashMap::new(), &HashMap::new());
         assert!(built.file_ids.contains("README.md"));
         assert!(built.file_ids.contains("notes/today.md"));
     }

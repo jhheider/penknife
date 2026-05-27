@@ -411,18 +411,19 @@ pub fn render_confirm(f: &mut Frame, area: Rect, message: &str) {
     f.render_widget(Clear, modal);
 
     let bold = Modifier::BOLD;
+    let dim = Style::default().fg(Color::DarkGray);
     let lines = vec![
         Line::styled(message.to_string(), Style::default().fg(Color::White)),
         Line::raw(""),
         Line::from(vec![
-            Span::styled("[", Style::default().fg(Color::DarkGray)),
+            Span::styled("[", dim),
             Span::styled("y", Style::default().fg(Color::Green).add_modifier(bold)),
-            Span::styled("] ", Style::default().fg(Color::DarkGray)),
+            Span::styled("/Enter] ", dim),
             Span::styled("Yes", Style::default().fg(Color::Green)),
             Span::raw("   "),
-            Span::styled("[", Style::default().fg(Color::DarkGray)),
+            Span::styled("[", dim),
             Span::styled("n", Style::default().fg(Color::Red).add_modifier(bold)),
-            Span::styled("] ", Style::default().fg(Color::DarkGray)),
+            Span::styled("/Esc] ", dim),
             Span::styled("No", Style::default().fg(Color::Red)),
         ]),
     ];
