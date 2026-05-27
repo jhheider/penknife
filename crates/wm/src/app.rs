@@ -302,6 +302,9 @@ impl App {
             git_repo_root: None,
             git_statuses: std::collections::HashMap::new(),
         };
+        // Populate git status before the first tree build so leaf glyphs
+        // show the right state without needing an explicit refresh first.
+        app.refresh_git_status();
         app.rebuild_tree();
         app.update_status();
         if let Some(w) = alias_warning {
