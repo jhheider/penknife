@@ -98,6 +98,10 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `/` | Normal | Fuzzy file picker (fzf-style) |
 | `O` | Normal | Pick a sort order for the tree (mtime, alpha, status) — persists to config |
 | `B` | Normal | Bulk ops menu: push all dirty, pull all remote-newer, format all JSON, prune store orphans |
+| `g` | Normal | `git status` (suspends TUI) — no-op outside a git repo |
+| `G` | Normal | `git log -p <selected>` (or repo-wide if no selection) |
+| `(` | Normal | `git pull --rebase` (with confirm) |
+| `)` | Normal | `git push` (with confirm) |
 | `s` | Normal | Find & replace (recursive in current scope, with per-match review) |
 | `↑/↓` `Ctrl-p/n` `Enter` `Esc` | Picker | Navigate / open / cancel |
 | `?` | Normal | Help |
@@ -114,7 +118,7 @@ By default, mouse capture is **off** so terminal-native features (cmd-click on U
 
 ### Status icons
 
-Each file in the tree carries a sync-state icon. By default these are emoji; set `WM_NO_EMOJI=1` (or run under a `TERM` of `dumb`/`linux`/`vt100`/`vt220`) to fall back to ASCII.
+Each file in the tree carries a sync-state icon followed by a git-state icon (the latter is blank for clean / not-in-repo). By default both columns use emoji; set `WM_NO_EMOJI=1` (or run under a `TERM` of `dumb`/`linux`/`vt100`/`vt220`) to fall back to ASCII.
 
 | Emoji | ASCII | Meaning |
 |---|---|---|

@@ -1,9 +1,10 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use ratatui::prelude::*;
 use tui_tree_widget::TreeItem;
 
+use crate::git::GitStatus;
 use crate::scanner::ScannedFile;
 use crate::store::Store;
 use crate::sync::{self, SyncStatus};
@@ -27,7 +28,13 @@ struct Node<'a> {
 
 /// Build a hierarchical tree of items from scanned files. Supports arbitrary
 /// directory depth — components are walked recursively rather than truncated.
-pub fn build_tree<'a>(files: &[ScannedFile], store: &Store, root: Option<&Path>) -> BuiltTree<'a> {
+/// `git_statuses` is optional per-file git state; empty map = no git column.
+pub fn build_tree<'a>(
+    files: &[ScannedFile],
+    store: &Store,
+    root: Option<&Path>,
+    git_statuses: &HashMap<String, GitStatus>,
+) -> BuiltTree<'a> {
     let mut root_node: Node = Node::default();
 
     for file in files {
@@ -43,7 +50,15 @@ pub fn build_tree<'a>(files: &[ScannedFile], store: &Store, root: Option<&Path>)
 
     let mut identifiers = Vec::new();
     let mut file_ids: HashSet<String> = HashSet::new();
-    let items = render_node(&root_node, "", store, root, &mut identifiers, &mut file_ids);
+    let items = render_node(
+        &root_node,
+        "",
+        store,
+        root,
+        git_statuses,
+        &mut identifiers,
+        &mut file_ids,
+    );
 
     BuiltTree {
         items,
@@ -57,6 +72,7 @@ fn render_node<'a>(
     prefix: &str,
     store: &Store,
     root: Option<&Path>,
+    git_statuses: &HashMap<String, GitStatus>,
     identifiers: &mut Vec<String>,
     file_ids: &mut HashSet<String>,
 ) -> Vec<TreeItem<'a, String>> {
@@ -69,7 +85,15 @@ fn render_node<'a>(
         } else {
             format!("{prefix}/{name}")
         };
-        let children = render_node(child, &dir_id, store, root, identifiers, file_ids);
+        let children = render_node(
+            child,
+            &dir_id,
+            store,
+            root,
+            git_statuses,
+            identifiers,
+            file_ids,
+        );
         identifiers.push(dir_id.clone());
         items.push(
             TreeItem::new(dir_id, format_directory(name), children).expect("unique tree item id"),
@@ -79,7 +103,8 @@ fn render_node<'a>(
     // Then files (preserve scanner-supplied order = mtime desc).
     for file in &node.files {
         let status = file_status(file, store, root);
-        let label = format_leaf(&file.rel_path, status);
+        let git = git_statuses.get(&file.rel_path).copied();
+        let label = format_leaf(&file.rel_path, status, git);
         let id = file.rel_path.clone();
         identifiers.push(id.clone());
         file_ids.insert(id.clone());
@@ -98,15 +123,30 @@ fn file_status(file: &ScannedFile, store: &Store, root: Option<&Path>) -> SyncSt
     sync::local_status(&content, entry)
 }
 
-fn format_leaf(rel_path: &str, status: SyncStatus) -> Line<'static> {
+fn format_leaf(rel_path: &str, status: SyncStatus, git: Option<GitStatus>) -> Line<'static> {
     let name = rel_path
         .rsplit('/')
         .next()
         .unwrap_or(rel_path)
         .trim_end_matches(".md");
+    let g = crate::glyphs::glyphs();
     let icon = format!("{} ", status.icon());
+
+    let (git_glyph, git_color) = match git {
+        Some(s) if s.staged && s.modified => {
+            // Staged AND further unstaged changes — show modified (the
+            // more-actionable signal), but in a brighter color.
+            (g.git_modified, Color::Yellow)
+        }
+        Some(s) if s.staged => (g.git_staged, Color::Green),
+        Some(s) if s.modified => (g.git_modified, Color::Yellow),
+        Some(s) if s.untracked => (g.git_untracked, Color::DarkGray),
+        _ => (g.git_clean, Color::DarkGray),
+    };
+
     Line::from(vec![
         Span::raw(icon),
+        Span::styled(format!("{git_glyph} "), Style::default().fg(git_color)),
         Span::styled(name.to_string(), Style::default().fg(status.color())),
     ])
 }
@@ -142,7 +182,7 @@ mod tests {
     fn deep_paths_nest_recursively() {
         let files = vec![sf("a/b/c/d.md"), sf("a/b/c/e.md"), sf("a/f.md")];
         let store = Store::default();
-        let built = build_tree(&files, &store, None);
+        let built = build_tree(&files, &store, None, &HashMap::new());
         // Top-level should have exactly one directory entry ("a"); identifiers
         // should include each directory level ("a", "a/b", "a/b/c").
         assert_eq!(built.items.len(), 1);
@@ -157,7 +197,7 @@ mod tests {
     fn root_level_files_appear_at_top() {
         let files = vec![sf("README.md"), sf("notes/today.md")];
         let store = Store::default();
-        let built = build_tree(&files, &store, None);
+        let built = build_tree(&files, &store, None, &HashMap::new());
         assert!(built.file_ids.contains("README.md"));
         assert!(built.file_ids.contains("notes/today.md"));
     }

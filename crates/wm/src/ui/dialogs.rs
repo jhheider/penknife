@@ -66,6 +66,18 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
             ],
         ),
         (
+            "Git (when root is in a repo)",
+            &[
+                ("g", "Show `git status` in suspended terminal"),
+                (
+                    "G",
+                    "Show `git log -p <file>` (or repo-wide if no selection)",
+                ),
+                ("(", "git pull --rebase (with confirm)"),
+                (")", "git push (with confirm)"),
+            ],
+        ),
+        (
             "Files & roots",
             &[
                 ("/", "Fuzzy file picker (fzf-style)"),

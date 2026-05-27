@@ -19,6 +19,10 @@ pub struct Glyphs {
     pub hydrating: &'static str,
     pub welcome: &'static str,
     pub question: &'static str,
+    pub git_staged: &'static str,
+    pub git_modified: &'static str,
+    pub git_untracked: &'static str,
+    pub git_clean: &'static str,
 }
 
 const EMOJI: Glyphs = Glyphs {
@@ -37,6 +41,10 @@ const EMOJI: Glyphs = Glyphs {
     hydrating: "🔄",
     welcome: "👋",
     question: "❓",
+    git_staged: "✦",
+    git_modified: "✱",
+    git_untracked: "?",
+    git_clean: " ",
 };
 
 const ASCII: Glyphs = Glyphs {
@@ -55,6 +63,10 @@ const ASCII: Glyphs = Glyphs {
     hydrating: "[~]",
     welcome: "[*]",
     question: "[?]",
+    git_staged: "+",
+    git_modified: "*",
+    git_untracked: "?",
+    git_clean: " ",
 };
 
 static GLYPHS: OnceLock<&'static Glyphs> = OnceLock::new();

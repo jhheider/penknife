@@ -121,6 +121,11 @@ pub enum ConfirmAction {
     },
     /// A bulk operation, with the file list captured at menu-display time.
     Bulk(BulkAction),
+    /// Run a shell command via the suspend/resume pattern. Used by the git
+    /// write commands (`git push`, `git pull --rebase`).
+    RunShell {
+        cmd: String,
+    },
 }
 
 pub struct App {
@@ -180,6 +185,12 @@ pub struct App {
     pub replace_target: String,
     pub replace_matches: Vec<crate::replace::ReplaceMatch>,
     pub replace_checked: Vec<bool>,
+    /// If the active root is inside a git repo, this is the repo's worktree
+    /// root and the per-file status map (keyed by rel_path relative to the
+    /// *active root*, matching ScannedFile.rel_path). Refreshed by
+    /// `refresh_git_status` on root switch and on `r`.
+    pub git_repo_root: Option<PathBuf>,
+    pub git_statuses: std::collections::HashMap<String, crate::git::GitStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,6 +299,8 @@ impl App {
             replace_target: String::new(),
             replace_matches: Vec::new(),
             replace_checked: Vec::new(),
+            git_repo_root: None,
+            git_statuses: std::collections::HashMap::new(),
         };
         app.rebuild_tree();
         app.update_status();
@@ -335,7 +348,12 @@ impl App {
     pub fn rebuild_tree(&mut self) {
         let root = self.current_root().cloned();
         self.apply_sort();
-        let built = tree::build_tree(&self.files, &self.store, root.as_deref());
+        let built = tree::build_tree(
+            &self.files,
+            &self.store,
+            root.as_deref(),
+            &self.git_statuses,
+        );
         self.tree_items = built.items;
         self.tree_identifiers = built.identifiers;
         self.tree_file_ids = built.file_ids;
@@ -376,9 +394,45 @@ impl App {
         } else {
             self.files.clear();
         }
+        self.refresh_git_status();
         self.rebuild_tree();
         self.update_preview();
         Ok(())
+    }
+
+    /// Re-query git for the active root's state. Quietly clears the status
+    /// map if the root isn't in a repo or if git isn't on PATH.
+    fn refresh_git_status(&mut self) {
+        self.git_statuses.clear();
+        self.git_repo_root = None;
+        let Some(root) = self.current_root().cloned() else {
+            return;
+        };
+        let Some(repo) = crate::git::find_repo_root(&root) else {
+            return;
+        };
+        let raw = crate::git::status(&repo);
+        // raw is keyed by repo-relative path. Translate to active-root-relative
+        // for tree lookups: if root == repo, this is a no-op; if root is a
+        // subdirectory of repo, strip the prefix and keep matching entries.
+        let prefix = root.strip_prefix(&repo).ok().map(|p| {
+            let mut s = p.to_string_lossy().to_string();
+            if !s.is_empty() && !s.ends_with('/') {
+                s.push('/');
+            }
+            s
+        });
+        for (path, st) in raw {
+            let rel = match &prefix {
+                Some(p) if !p.is_empty() => match path.strip_prefix(p.as_str()) {
+                    Some(r) => r.to_string(),
+                    None => continue, // entry outside our scanned root
+                },
+                _ => path,
+            };
+            self.git_statuses.insert(rel, st);
+        }
+        self.git_repo_root = Some(repo);
     }
 
     /// Switch to a different root by index.
@@ -817,6 +871,9 @@ impl App {
                 ConfirmAction::Bulk(action) => {
                     self.run_bulk(action);
                 }
+                ConfirmAction::RunShell { cmd } => {
+                    self.pending_alias = Some(cmd);
+                }
             }
         }
         self.mode = Mode::Normal;
@@ -1050,6 +1107,12 @@ impl App {
             KeyCode::Char('B') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_bulk_menu();
             }
+            KeyCode::Char('g') => self.do_git_status(),
+            KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.do_git_log();
+            }
+            KeyCode::Char('(') => self.confirm_git_pull(),
+            KeyCode::Char(')') => self.confirm_git_push(),
             KeyCode::Char('=') => self.do_format_in_place(),
             KeyCode::Char('s') => self.start_replace(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2271,6 +2334,74 @@ impl App {
         }
     }
 
+    // ── Git integration ────────────────────────────────────────────────────
+
+    /// Common helper: return the active repo root if we have one, else show
+    /// a status message and return None. Use at the top of each `g*` handler.
+    fn git_root_or_warn(&mut self) -> Option<PathBuf> {
+        match self.git_repo_root.clone() {
+            Some(p) => Some(p),
+            None => {
+                self.status_message = "Not in a git repo (root has no .git ancestor).".into();
+                None
+            }
+        }
+    }
+
+    fn do_git_status(&mut self) {
+        let Some(repo) = self.git_root_or_warn() else {
+            return;
+        };
+        // We suspend the TUI and run `git status` so the user sees the full
+        // colored output in their scrollback.
+        self.pending_alias = Some(format!("git -C {} status", shell_quote(&repo)));
+    }
+
+    fn do_git_log(&mut self) {
+        let Some(repo) = self.git_root_or_warn() else {
+            return;
+        };
+        let Some(rel) = self.selected_file() else {
+            // No file selected — show repo-wide log instead.
+            self.pending_alias = Some(format!("git -C {} log", shell_quote(&repo)));
+            return;
+        };
+        // Translate root-relative path to repo-relative (they're the same when
+        // root == repo).
+        let abs = self.abs_path(&rel);
+        let repo_rel = abs
+            .strip_prefix(&repo)
+            .map(|p| p.to_path_buf())
+            .unwrap_or(abs);
+        self.pending_alias = Some(format!(
+            "git -C {} log -p -- {}",
+            shell_quote(&repo),
+            shell_quote(&repo_rel),
+        ));
+    }
+
+    fn confirm_git_pull(&mut self) {
+        let Some(repo) = self.git_root_or_warn() else {
+            return;
+        };
+        let cmd = format!("git -C {} pull --rebase", shell_quote(&repo));
+        self.mode = Mode::Confirm {
+            message: format!("Run `git pull --rebase` in {}?", repo.display()),
+            action: ConfirmAction::RunShell { cmd },
+        };
+    }
+
+    fn confirm_git_push(&mut self) {
+        let Some(repo) = self.git_root_or_warn() else {
+            return;
+        };
+        let cmd = format!("git -C {} push", shell_quote(&repo));
+        self.mode = Mode::Confirm {
+            message: format!("Run `git push` in {}?", repo.display()),
+            action: ConfirmAction::RunShell { cmd },
+        };
+    }
+
     // ── Bulk operations menu ──────────────────────────────────────────────
 
     fn start_bulk_menu(&mut self) {
@@ -2485,6 +2616,14 @@ fn rect_contains(rect: &Rect, x: u16, y: u16) -> bool {
         && x < rect.x + rect.width
         && y >= rect.y
         && y < rect.y + rect.height
+}
+
+/// Single-quote a path for safe inclusion in a `sh -c` command. Single
+/// quotes in the input are escaped via the standard `'\''` trick.
+fn shell_quote(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{escaped}'")
 }
 
 /// Expand a leading `~` to the user's home directory. Returns the input
