@@ -234,7 +234,20 @@ fn suspend_and_run_alias(
     }
     let status = command.status();
 
+    // Pause for a keypress so the user can actually read the output before
+    // the TUI redraws over it. Without this, fast commands like `git status`
+    // flash and disappear. Re-enable raw mode briefly so a single keystroke
+    // (without Enter) dismisses the prompt; then re-enter alt screen.
+    use std::io::Write as _;
+    let _ = write!(
+        io::stdout(),
+        "\n\x1b[2m[Press any key to return to wm]\x1b[0m"
+    );
+    let _ = io::stdout().flush();
     enable_raw_mode()?;
+    // Drain whatever event arrives — Key, Mouse, Resize all dismiss.
+    let _ = crossterm::event::read();
+    // raw mode stays on for the TUI; we don't need to toggle it off again.
     io::stdout().execute(EnterAlternateScreen)?;
     if had_mouse {
         let _ = io::stdout().execute(EnableMouseCapture);
