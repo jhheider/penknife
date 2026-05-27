@@ -69,6 +69,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
             "Files & roots",
             &[
                 ("/", "Fuzzy file picker (fzf-style)"),
+                ("O", "Pick sort order for the tree"),
                 ("s", "Find & replace (recursive within current scope)"),
                 ("I", "Import a Google Doc as markdown"),
                 ("R", "Switch root directory"),
@@ -480,7 +481,10 @@ pub fn render_root_switcher(f: &mut Frame, area: Rect, app: &App) {
         } else {
             Style::default()
         };
-        lines.push(Line::styled(format!("{marker}{}", root.display()), style));
+        lines.push(Line::styled(
+            format!("{marker}{}", root.path.display()),
+            style,
+        ));
     }
 
     if app.config.roots.is_empty() {
@@ -766,6 +770,52 @@ fn trim_context(before: &str, after: &str, pad: usize) -> (String, String) {
         after.to_string()
     };
     (b_out, a_out)
+}
+
+/// Render the sort-mode picker. Lists the five sort modes with the active
+/// one marked, and the cursor on `selected`.
+pub fn render_sort_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
+    let modal = modal_area(area, 50, 30);
+    f.render_widget(Clear, modal);
+
+    let g = crate::glyphs::glyphs();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!("{} Sort by", g.file_pane))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let active = app.config.sort.mode;
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, mode) in crate::config::SortMode::all().iter().enumerate() {
+        let is_selected = i == selected;
+        let is_active = *mode == active;
+        let marker = if is_active { " ● " } else { "   " };
+        let style = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else if is_active {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        lines.push(Line::styled(format!("{marker}{}", mode.label()), style));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "  ↑/↓ navigate · Enter select · Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let para = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    f.render_widget(para, modal);
 }
 
 /// Render setup/add root dialog.

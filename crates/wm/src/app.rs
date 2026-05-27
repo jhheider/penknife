@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -62,6 +62,11 @@ pub enum Mode {
     /// the current rel_path; Enter commits, Esc cancels.
     Rename {
         old_rel: String,
+    },
+    /// Modal picker for the tree's sort order. `selected` indexes into
+    /// `SortMode::all()`.
+    SortMenu {
+        selected: usize,
     },
 }
 
@@ -158,7 +163,7 @@ struct StatusCounts {
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
-    'H', 'r', 'R', 'I', 's', 'm', '=',
+    'H', 'r', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')',
 ];
 
 impl App {
@@ -203,7 +208,8 @@ impl App {
         let files = if config.roots.is_empty() {
             Vec::new()
         } else {
-            scanner::scan_directory(&config.roots[0]).unwrap_or_default()
+            let ignore = scanner::build_globset(&config.roots[0].ignore);
+            scanner::scan_directory(&config.roots[0].path, &ignore).unwrap_or_default()
         };
 
         let mut app = App {
@@ -252,8 +258,14 @@ impl App {
         Ok(app)
     }
 
-    /// Get the current root directory, if any.
+    /// Get the path of the current root directory, if any.
     fn current_root(&self) -> Option<&PathBuf> {
+        self.config.roots.get(self.active_root).map(|r| &r.path)
+    }
+
+    /// Get the full `Root` entry (path + ignore patterns) for the active root.
+    #[allow(dead_code)] // used by the upcoming ignore-pattern wiring (task #54)
+    fn current_root_entry(&self) -> Option<&crate::config::Root> {
         self.config.roots.get(self.active_root)
     }
 
@@ -282,16 +294,46 @@ impl App {
     }
 
     pub fn rebuild_tree(&mut self) {
-        let root = self.config.roots.get(self.active_root);
-        let built = tree::build_tree(&self.files, &self.store, root.map(|r| r.as_path()));
+        let root = self.current_root().cloned();
+        self.apply_sort();
+        let built = tree::build_tree(&self.files, &self.store, root.as_deref());
         self.tree_items = built.items;
         self.tree_identifiers = built.identifiers;
         self.tree_file_ids = built.file_ids;
     }
 
+    /// Reorder `self.files` per the active sort mode. Status sort needs
+    /// store access, which is why this lives on App rather than in scanner.
+    fn apply_sort(&mut self) {
+        use crate::config::SortMode;
+        match self.config.sort.mode {
+            SortMode::MtimeDesc => {
+                self.files.sort_by_key(|f| std::cmp::Reverse(f.modified));
+            }
+            SortMode::MtimeAsc => {
+                self.files.sort_by_key(|f| f.modified);
+            }
+            SortMode::AlphaAsc => {
+                self.files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+            }
+            SortMode::AlphaDesc => {
+                self.files.sort_by(|a, b| b.rel_path.cmp(&a.rel_path));
+            }
+            SortMode::Status => {
+                let root = self.current_root().cloned();
+                self.files.sort_by(|a, b| {
+                    let sa = status_rank(a, &self.store, root.as_deref());
+                    let sb = status_rank(b, &self.store, root.as_deref());
+                    sa.cmp(&sb).then_with(|| b.modified.cmp(&a.modified))
+                });
+            }
+        }
+    }
+
     pub fn refresh_files(&mut self) -> Result<()> {
-        if let Some(root) = self.current_root() {
-            self.files = scanner::scan_directory(root)?;
+        if let Some(entry) = self.current_root_entry().cloned() {
+            let ignore = scanner::build_globset(&entry.ignore);
+            self.files = scanner::scan_directory(&entry.path, &ignore)?;
         } else {
             self.files.clear();
         }
@@ -586,6 +628,7 @@ impl App {
             Mode::ReplaceTarget => self.handle_replace_target_key(key),
             Mode::ReplaceReview { .. } => self.handle_replace_review_key(key),
             Mode::Rename { .. } => self.handle_rename_key(key),
+            Mode::SortMenu { .. } => self.handle_sort_menu_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -958,6 +1001,9 @@ impl App {
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
             KeyCode::Char('_') => self.confirm_trash_local(),
             KeyCode::Char('m') => self.start_rename(),
+            KeyCode::Char('O') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.start_sort_menu();
+            }
             KeyCode::Char('=') => self.do_format_in_place(),
             KeyCode::Char('s') => self.start_replace(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2115,6 +2161,74 @@ impl App {
         if let Err(e) = self.refresh_files() {
             self.status_message = format!("Saved but refresh failed: {e}");
         }
+    }
+}
+
+// ── Sort menu (free-standing impl block to keep diff readable) ─────────────
+
+impl App {
+    fn start_sort_menu(&mut self) {
+        use crate::config::SortMode;
+        let current = self.config.sort.mode;
+        let selected = SortMode::all()
+            .iter()
+            .position(|m| *m == current)
+            .unwrap_or(0);
+        self.mode = Mode::SortMenu { selected };
+    }
+
+    fn handle_sort_menu_key(&mut self, key: KeyEvent) {
+        use crate::config::SortMode;
+        let Mode::SortMenu { selected } = self.mode else {
+            return;
+        };
+        let all = SortMode::all();
+        let n = all.len();
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.mode = Mode::SortMenu {
+                    selected: (selected + 1).min(n - 1),
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::SortMenu {
+                    selected: selected.saturating_sub(1),
+                };
+            }
+            KeyCode::Enter => {
+                let chosen = all[selected];
+                self.config.sort.mode = chosen;
+                if let Err(e) = self.config.save() {
+                    self.status_message = format!("Saved sort but config save failed: {e}");
+                } else {
+                    self.status_message = format!("Sort: {}", chosen.label());
+                }
+                self.rebuild_tree();
+                self.mode = Mode::Normal;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Bucket a file by sync status for sort ordering. Lower = appears first.
+fn status_rank(file: &ScannedFile, store: &Store, root: Option<&Path>) -> u8 {
+    let entry = root.and_then(|r| store.get(r, &file.rel_path));
+    let status = if let Some(e) = entry {
+        let content = std::fs::read_to_string(&file.abs_path).unwrap_or_default();
+        sync::local_status(&content, Some(e))
+    } else {
+        sync::SyncStatus::NotGisted
+    };
+    match status {
+        sync::SyncStatus::Conflict => 0,
+        sync::SyncStatus::LocalNewer => 1,
+        sync::SyncStatus::RemoteNewer => 2,
+        sync::SyncStatus::NotGisted => 3,
+        sync::SyncStatus::Synced => 4,
     }
 }
 

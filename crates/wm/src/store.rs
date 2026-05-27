@@ -54,7 +54,8 @@ impl Store {
 
         // Migrate v1 → v2 in memory.
         let cfg = Config::load().unwrap_or_default();
-        let migrated = migrate_v1_value(&value, &cfg.roots)?;
+        let root_paths: Vec<PathBuf> = cfg.roots.iter().map(|r| r.path.clone()).collect();
+        let migrated = migrate_v1_value(&value, &root_paths)?;
         // Persist the migrated format so subsequent loads are cheap and the
         // file no longer mentions v1.
         if let Err(e) = migrated.save() {

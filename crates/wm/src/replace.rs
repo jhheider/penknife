@@ -52,7 +52,10 @@ pub fn scan(scope: &Path, root: &Path, query: &str) -> Vec<ReplaceMatch> {
     if query.is_empty() {
         return Vec::new();
     }
-    let files = match scanner::scan_directory(scope) {
+    // Find/replace honors no ignore patterns of its own — if the user has
+    // narrowed the picker (via [ignore] in config) those exclusions belong
+    // to the *tree*, not to substring search across the directory.
+    let files = match scanner::scan_directory(scope, &globset::GlobSet::empty()) {
         Ok(f) => f,
         Err(_) => return Vec::new(),
     };

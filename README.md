@@ -96,6 +96,7 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `R` | Normal | Switch root directory |
 | `r` | Normal | Refresh the tree |
 | `/` | Normal | Fuzzy file picker (fzf-style) |
+| `O` | Normal | Pick a sort order for the tree (mtime, alpha, status) — persists to config |
 | `s` | Normal | Find & replace (recursive in current scope, with per-match review) |
 | `↑/↓` `Ctrl-p/n` `Enter` `Esc` | Picker | Navigate / open / cancel |
 | `?` | Normal | Help |

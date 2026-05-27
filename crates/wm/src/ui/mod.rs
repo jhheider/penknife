@@ -89,6 +89,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(")", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" · {}", app.config.sort.mode.short()),
+            Style::default().fg(Color::DarkGray),
+        ),
     ]);
     let tree_block = Block::default()
         .borders(Borders::ALL)
@@ -231,6 +235,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 &format!("New path for {old_rel} (relative to root):"),
                 &app.input_editor,
             );
+        }
+        Mode::SortMenu { selected } => {
+            dialogs::render_sort_menu(f, f.area(), app, *selected);
         }
         _ => {}
     }
