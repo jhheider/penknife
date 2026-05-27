@@ -68,6 +68,43 @@ pub enum Mode {
     SortMenu {
         selected: usize,
     },
+    /// Bulk operations menu (push-all-dirty / pull-all-remote-newer /
+    /// format-all-json / prune-orphans). `selected` indexes into the
+    /// option list.
+    BulkMenu {
+        selected: usize,
+    },
+}
+
+/// The four operations offered by the bulk menu. Each carries the rel_paths
+/// (or store keys) it will touch, computed at menu-construction time so the
+/// confirm dialog can quote an accurate count.
+#[derive(Debug, Clone)]
+pub enum BulkAction {
+    PushAllDirty { rels: Vec<String> },
+    PullAllRemoteNewer { rels: Vec<String> },
+    FormatAllJson { rels: Vec<String> },
+    PruneOrphans { rels: Vec<String> },
+}
+
+impl BulkAction {
+    pub fn count(&self) -> usize {
+        match self {
+            Self::PushAllDirty { rels }
+            | Self::PullAllRemoteNewer { rels }
+            | Self::FormatAllJson { rels }
+            | Self::PruneOrphans { rels } => rels.len(),
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::PushAllDirty { .. } => "Push all dirty",
+            Self::PullAllRemoteNewer { .. } => "Pull all remote-newer",
+            Self::FormatAllJson { .. } => "Format all JSON",
+            Self::PruneOrphans { .. } => "Prune store orphans",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +119,8 @@ pub enum ConfirmAction {
         rel_path: String,
         root: PathBuf,
     },
+    /// A bulk operation, with the file list captured at menu-display time.
+    Bulk(BulkAction),
 }
 
 pub struct App {
@@ -629,6 +668,7 @@ impl App {
             Mode::ReplaceReview { .. } => self.handle_replace_review_key(key),
             Mode::Rename { .. } => self.handle_rename_key(key),
             Mode::SortMenu { .. } => self.handle_sort_menu_key(key),
+            Mode::BulkMenu { .. } => self.handle_bulk_menu_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -773,6 +813,9 @@ impl App {
                 } => self.do_delete_remote(rel_path, root, gist_id),
                 ConfirmAction::TrashLocal { rel_path, root } => {
                     self.do_trash_local(rel_path, root);
+                }
+                ConfirmAction::Bulk(action) => {
+                    self.run_bulk(action);
                 }
             }
         }
@@ -1004,6 +1047,9 @@ impl App {
             KeyCode::Char('O') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_sort_menu();
             }
+            KeyCode::Char('B') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.start_bulk_menu();
+            }
             KeyCode::Char('=') => self.do_format_in_place(),
             KeyCode::Char('s') => self.start_replace(),
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1218,11 +1264,17 @@ impl App {
     }
 
     fn do_sync_up(&mut self) {
-        let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+        let Some(rel) = self.selected_file() else {
             return;
         };
-        let Some(rel) = self.selected_file() else {
+        self.do_sync_up_for(rel);
+    }
+
+    /// Inner push implementation, parameterized by rel_path so bulk-push
+    /// can call it once per dirty file.
+    fn do_sync_up_for(&mut self, rel: String) {
+        let Some(token) = self.token.clone() else {
+            self.status_message = "No GitHub token available.".into();
             return;
         };
         let Some(root) = self.current_root().cloned() else {
@@ -1233,7 +1285,7 @@ impl App {
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
-                self.status_message = format!("Read error: {e}");
+                self.status_message = format!("Read {rel}: {e}");
                 return;
             }
         };
@@ -1261,11 +1313,17 @@ impl App {
     }
 
     fn do_sync_down(&mut self) {
-        let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+        let Some(rel) = self.selected_file() else {
             return;
         };
-        let Some(rel) = self.selected_file() else {
+        self.do_sync_down_for(rel);
+    }
+
+    /// Inner pull implementation, parameterized by rel_path so bulk-pull
+    /// can call it once per remote-newer file.
+    fn do_sync_down_for(&mut self, rel: String) {
+        let Some(token) = self.token.clone() else {
+            self.status_message = "No GitHub token available.".into();
             return;
         };
         let Some(root) = self.current_root().cloned() else {
@@ -1273,7 +1331,7 @@ impl App {
             return;
         };
         let Some(entry) = self.store.get(&root, &rel).cloned() else {
-            self.status_message = "No gist mapped for this file.".into();
+            self.status_message = format!("No gist mapped for {rel}.");
             return;
         };
         let filename = self
@@ -2210,6 +2268,193 @@ impl App {
                 self.mode = Mode::Normal;
             }
             _ => {}
+        }
+    }
+
+    // ── Bulk operations menu ──────────────────────────────────────────────
+
+    fn start_bulk_menu(&mut self) {
+        if self.current_root().is_none() {
+            self.status_message = "No root.".into();
+            return;
+        }
+        self.mode = Mode::BulkMenu { selected: 0 };
+    }
+
+    /// The four bulk-menu options, in display order, each precomputed with
+    /// the set of rel_paths it would touch (so the user sees an accurate count
+    /// in the menu and in the confirm dialog).
+    pub fn bulk_options(&self) -> Vec<BulkAction> {
+        use crate::config::SortMode;
+        let _ = SortMode::MtimeDesc; // keep import locality clear
+        let mut push_dirty: Vec<String> = Vec::new();
+        let mut pull_newer: Vec<String> = Vec::new();
+        let mut format_json: Vec<String> = Vec::new();
+        if let Some(root) = self.current_root() {
+            for f in &self.files {
+                let entry = self.store.get(root, &f.rel_path);
+                let content = std::fs::read_to_string(&f.abs_path).unwrap_or_default();
+                let status = if entry.is_some() {
+                    sync::local_status(&content, entry)
+                } else {
+                    sync::SyncStatus::NotGisted
+                };
+                match status {
+                    sync::SyncStatus::LocalNewer
+                    | sync::SyncStatus::Conflict
+                    | sync::SyncStatus::NotGisted => push_dirty.push(f.rel_path.clone()),
+                    sync::SyncStatus::RemoteNewer => pull_newer.push(f.rel_path.clone()),
+                    sync::SyncStatus::Synced => {}
+                }
+                if f.rel_path.ends_with(".json")
+                    && let Ok(value) = serde_json::from_str::<serde_json::Value>(&content)
+                {
+                    let compact = serde_json::to_string(&value).unwrap_or_default();
+                    if content != compact && content != format!("{compact}\n") {
+                        // It's not compact; but is it already canonical-pretty?
+                        let pretty = serde_json::to_string_pretty(&value).unwrap_or_default();
+                        if content != pretty && content != format!("{pretty}\n") {
+                            format_json.push(f.rel_path.clone());
+                        }
+                    }
+                }
+            }
+        }
+        // Orphan detection: store entries with no matching scanned file.
+        let mut orphans: Vec<String> = Vec::new();
+        if let Some(root) = self.current_root()
+            && let Some(files_for_root) = self.store.files_for_root(root)
+        {
+            let live: std::collections::HashSet<&str> =
+                self.files.iter().map(|f| f.rel_path.as_str()).collect();
+            for rel in files_for_root.keys() {
+                if !live.contains(rel.as_str()) {
+                    orphans.push(rel.clone());
+                }
+            }
+        }
+        vec![
+            BulkAction::PushAllDirty { rels: push_dirty },
+            BulkAction::PullAllRemoteNewer { rels: pull_newer },
+            BulkAction::FormatAllJson { rels: format_json },
+            BulkAction::PruneOrphans { rels: orphans },
+        ]
+    }
+
+    fn handle_bulk_menu_key(&mut self, key: KeyEvent) {
+        let Mode::BulkMenu { selected } = self.mode else {
+            return;
+        };
+        let opts = self.bulk_options();
+        let n = opts.len();
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.mode = Mode::BulkMenu {
+                    selected: (selected + 1).min(n.saturating_sub(1)),
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::BulkMenu {
+                    selected: selected.saturating_sub(1),
+                };
+            }
+            KeyCode::Enter => {
+                let Some(action) = opts.into_iter().nth(selected) else {
+                    self.mode = Mode::Normal;
+                    return;
+                };
+                if action.count() == 0 {
+                    self.status_message = format!("{}: nothing to do.", action.label());
+                    self.mode = Mode::Normal;
+                    return;
+                }
+                let label = action.label();
+                let count = action.count();
+                let detail = match &action {
+                    BulkAction::PushAllDirty { .. } => "Local content overwrites remote.",
+                    BulkAction::PullAllRemoteNewer { .. } => "Remote content overwrites local.",
+                    BulkAction::FormatAllJson { .. } => "Rewrites each file to pretty form.",
+                    BulkAction::PruneOrphans { .. } => "Drops store entries for missing files.",
+                };
+                self.mode = Mode::Confirm {
+                    message: format!("{label}: {count} file(s). {detail}"),
+                    action: ConfirmAction::Bulk(action),
+                };
+            }
+            _ => {}
+        }
+    }
+
+    fn run_bulk(&mut self, action: BulkAction) {
+        match action {
+            BulkAction::PushAllDirty { rels } => {
+                let n = rels.len();
+                self.status_message = format!("Pushing {n} files...");
+                for rel in rels {
+                    self.do_sync_up_for(rel);
+                }
+            }
+            BulkAction::PullAllRemoteNewer { rels } => {
+                let n = rels.len();
+                self.status_message = format!("Pulling {n} files...");
+                for rel in rels {
+                    self.do_sync_down_for(rel);
+                }
+            }
+            BulkAction::FormatAllJson { rels } => {
+                let mut ok = 0usize;
+                let mut errs = 0usize;
+                for rel in &rels {
+                    let abs = self.abs_path(rel);
+                    let Ok(content) = std::fs::read_to_string(&abs) else {
+                        errs += 1;
+                        continue;
+                    };
+                    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+                        errs += 1;
+                        continue;
+                    };
+                    let pretty = serde_json::to_string_pretty(&value)
+                        .map(|s| format!("{s}\n"))
+                        .unwrap_or_default();
+                    if pretty != content {
+                        match std::fs::write(&abs, &pretty) {
+                            Ok(()) => ok += 1,
+                            Err(_) => errs += 1,
+                        }
+                    }
+                }
+                if let Err(e) = self.refresh_files() {
+                    self.status_message = format!("Formatted {ok}; refresh failed: {e}");
+                    return;
+                }
+                self.update_preview();
+                self.update_status();
+                self.status_message = if errs == 0 {
+                    format!("Formatted {ok} JSON file(s).")
+                } else {
+                    format!("Formatted {ok}; {errs} error(s).")
+                };
+            }
+            BulkAction::PruneOrphans { rels } => {
+                let Some(root) = self.current_root().cloned() else {
+                    self.status_message = "No root.".into();
+                    return;
+                };
+                let n = rels.len();
+                for rel in &rels {
+                    self.store.remove(&root, rel);
+                }
+                if let Err(e) = self.store.save() {
+                    self.status_message = format!("Pruned {n}; store save failed: {e}");
+                    return;
+                }
+                self.update_status();
+                self.status_message = format!("Pruned {n} orphan(s).");
+            }
         }
     }
 }

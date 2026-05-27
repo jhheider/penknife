@@ -70,6 +70,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
             &[
                 ("/", "Fuzzy file picker (fzf-style)"),
                 ("O", "Pick sort order for the tree"),
+                ("B", "Bulk ops menu (push/pull dirty, format JSON, prune)"),
                 ("s", "Find & replace (recursive within current scope)"),
                 ("I", "Import a Google Doc as markdown"),
                 ("R", "Switch root directory"),
@@ -770,6 +771,61 @@ fn trim_context(before: &str, after: &str, pad: usize) -> (String, String) {
         after.to_string()
     };
     (b_out, a_out)
+}
+
+/// Render the bulk-operations picker. Shows the four ops, each with its
+/// precomputed file count colored by emptiness (dim if 0, yellow/bold if >0).
+pub fn render_bulk_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
+    let modal = modal_area(area, 60, 40);
+    f.render_widget(Clear, modal);
+
+    let g = crate::glyphs::glyphs();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!("{} Bulk operations", g.file_pane))
+        .border_style(Style::default().fg(Color::Yellow))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let opts = app.bulk_options();
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, opt) in opts.iter().enumerate() {
+        let is_selected = i == selected;
+        let count = opt.count();
+        let marker = if is_selected { " ▶ " } else { "   " };
+        let row_style = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let count_style = if is_selected {
+            row_style.add_modifier(Modifier::BOLD)
+        } else if count == 0 {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker.to_string(), row_style),
+            Span::styled(format!("{:<26}", opt.label()), row_style),
+            Span::styled(format!("({count})"), count_style),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "  ↑/↓ navigate · Enter run (with confirm) · Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let para = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    f.render_widget(para, modal);
 }
 
 /// Render the sort-mode picker. Lists the five sort modes with the active

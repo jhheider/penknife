@@ -97,6 +97,7 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `r` | Normal | Refresh the tree |
 | `/` | Normal | Fuzzy file picker (fzf-style) |
 | `O` | Normal | Pick a sort order for the tree (mtime, alpha, status) — persists to config |
+| `B` | Normal | Bulk ops menu: push all dirty, pull all remote-newer, format all JSON, prune store orphans |
 | `s` | Normal | Find & replace (recursive in current scope, with per-match review) |
 | `↑/↓` `Ctrl-p/n` `Enter` `Esc` | Picker | Navigate / open / cancel |
 | `?` | Normal | Help |

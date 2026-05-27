@@ -239,6 +239,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Mode::SortMenu { selected } => {
             dialogs::render_sort_menu(f, f.area(), app, *selected);
         }
+        Mode::BulkMenu { selected } => {
+            dialogs::render_bulk_menu(f, f.area(), app, *selected);
+        }
         _ => {}
     }
 }
