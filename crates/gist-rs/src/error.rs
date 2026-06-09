@@ -13,6 +13,11 @@ pub enum GistError {
 
     #[error("Failed to run `gh auth token`: {0}")]
     GhCli(String),
+
+    #[error(
+        "Gist file {filename} is {size} bytes — beyond the 10MB raw-fetch limit; clone the gist's git repo instead"
+    )]
+    TooLarge { filename: String, size: u64 },
 }
 
 pub type Result<T> = std::result::Result<T, GistError>;

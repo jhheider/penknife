@@ -110,6 +110,12 @@ impl BulkAction {
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
     SyncDown,
+    /// Re-push overwriting a remote that changed since the last sync. Only
+    /// reachable from the PushBlocked prompt, so the user has already seen
+    /// what diverged.
+    ForcePush {
+        rel_path: String,
+    },
     DeleteRemote {
         rel_path: String,
         root: PathBuf,
@@ -219,7 +225,7 @@ struct StatusCounts {
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
-    'H', 'r', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')',
+    'H', 'r', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')', 'f',
 ];
 
 impl App {
@@ -442,6 +448,22 @@ impl App {
             };
             self.status_cache.insert(f.rel_path.clone(), status);
         }
+    }
+
+    /// Recompute one file's cached sync status (one disk read) after a store
+    /// entry changed — push/pull/check results — without rescanning the tree.
+    fn refresh_status_for(&mut self, rel_path: &str) {
+        let Some(root) = self.current_root().cloned() else {
+            return;
+        };
+        let entry = self.store.get(&root, rel_path);
+        let status = if entry.is_some() {
+            let content = std::fs::read_to_string(self.abs_path(rel_path)).unwrap_or_default();
+            sync::local_status(&content, entry)
+        } else {
+            sync::SyncStatus::NotGisted
+        };
+        self.status_cache.insert(rel_path.to_string(), status);
     }
 
     /// Cache lookup; defaults to NotGisted for paths not in the cache.
@@ -915,6 +937,9 @@ impl App {
         if confirmed {
             match action_copy {
                 ConfirmAction::SyncDown => self.do_sync_down(),
+                ConfirmAction::ForcePush { rel_path } => {
+                    self.do_sync_up_for(rel_path, true);
+                }
                 ConfirmAction::DeleteRemote {
                     rel_path,
                     root,
@@ -1173,6 +1198,7 @@ impl App {
             KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_hydration();
             }
+            KeyCode::Char('f') => self.start_remote_check(),
             KeyCode::Char('r') => {
                 if let Err(e) = self.refresh_files() {
                     self.status_message = format!("Refresh error: {e}");
@@ -1259,8 +1285,9 @@ impl App {
                         self.status_message = format!("Push ok but store save failed: {e}");
                         return;
                     }
-                    self.status_message = format!("Pushed {rel_path} → {url}");
+                    self.refresh_status_for(&rel_path);
                     self.rebuild_tree();
+                    self.status_message = format!("Pushed {rel_path} → {url}");
                     // Follow up on a queued copy-url request, if it's for this file.
                     if self.pending_copy.as_ref().is_some_and(|p| *p == rel_path) {
                         self.pending_copy = None;
@@ -1275,10 +1302,20 @@ impl App {
             AsyncEvent::PullDone {
                 root,
                 rel_path,
+                expected_local_sha256,
                 result,
             } => match result {
                 Ok((content, entry)) => {
                     let path = root.join(&rel_path);
+                    // Refuse to clobber edits made while the pull was in
+                    // flight (e.g. via `e` between confirm and completion).
+                    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+                    if sync::sha256_hex(&on_disk) != expected_local_sha256 {
+                        self.status_message = format!(
+                            "{rel_path} changed on disk during pull — not overwriting. Pull again to retry."
+                        );
+                        return;
+                    }
                     if let Err(e) = std::fs::write(&path, &content) {
                         self.status_message = format!("Write failed: {e}");
                         return;
@@ -1288,12 +1325,86 @@ impl App {
                         self.status_message = format!("Pull ok but store save failed: {e}");
                         return;
                     }
-                    self.status_message = format!("Pulled {rel_path}");
+                    self.refresh_status_for(&rel_path);
                     self.update_preview();
                     self.rebuild_tree();
+                    self.status_message = format!("Pulled {rel_path}");
                 }
                 Err(e) => {
                     self.status_message = format!("Pull failed: {e}");
+                }
+            },
+            AsyncEvent::PushBlocked {
+                root,
+                rel_path,
+                remote_sha256,
+                remote_updated_at,
+            } => {
+                // Record the observed divergence so the tree shows the real
+                // state (RemoteNewer/Conflict) even if the user declines.
+                if let Some(entry) = self.store.get(&root, &rel_path).cloned() {
+                    let mut updated = entry;
+                    updated.remote_sha256 = remote_sha256;
+                    updated.remote_updated_at = Some(remote_updated_at);
+                    self.store.insert(&root, rel_path.clone(), updated);
+                    if let Err(e) = self.store.save() {
+                        self.status_message = format!("Store save failed: {e}");
+                    }
+                    self.refresh_status_for(&rel_path);
+                    self.rebuild_tree();
+                    self.update_status();
+                }
+                self.mode = Mode::Confirm {
+                    message: format!(
+                        "Remote gist for {rel_path} changed since last sync. Force push (overwrites remote — use D to diff first)?"
+                    ),
+                    action: ConfirmAction::ForcePush {
+                        rel_path: rel_path.clone(),
+                    },
+                };
+                self.status_message = format!("Push blocked: remote changed for {rel_path}");
+            }
+            AsyncEvent::RemoteCheckProgress { done, total } => {
+                self.status_message = format!("Checking remote... {done}/{total}");
+            }
+            AsyncEvent::RemoteCheckDone {
+                root,
+                started,
+                result,
+            } => match result {
+                Ok(outcome) => {
+                    let mut applied = 0usize;
+                    for (rel, refreshed) in outcome.updated {
+                        let current = self.store.get(&root, &rel);
+                        if crate::remote::should_apply_update(current, &refreshed, started) {
+                            self.store.insert(&root, rel.clone(), refreshed);
+                            self.refresh_status_for(&rel);
+                            applied += 1;
+                        }
+                    }
+                    if applied > 0
+                        && let Err(e) = self.store.save()
+                    {
+                        self.status_message = format!("Remote check: store save failed: {e}");
+                        return;
+                    }
+                    self.rebuild_tree();
+                    self.update_status();
+                    let mut msg = format!(
+                        "Remote check: {} mapped file(s), {} changed remotely",
+                        outcome.checked, outcome.divergent
+                    );
+                    if !outcome.missing.is_empty() {
+                        msg.push_str(&format!(
+                            ", {} gist(s) deleted remotely ({})",
+                            outcome.missing.len(),
+                            outcome.missing.join(", ")
+                        ));
+                    }
+                    self.status_message = msg;
+                }
+                Err(e) => {
+                    self.status_message = format!("Remote check failed: {e}");
                 }
             },
             AsyncEvent::HydrationUpdate(progress) => {
@@ -1328,11 +1439,35 @@ impl App {
                     self.mode = Mode::Message(format!("Hydration error: {e}"));
                 }
             },
-            AsyncEvent::StatusCheck { rel_path, result } => match result {
-                Ok((status, remote_content)) => {
-                    self.status_message = format!("{} {rel_path}", status.icon());
+            AsyncEvent::StatusCheck {
+                root,
+                rel_path,
+                started,
+                result,
+            } => match result {
+                Ok(full) => {
+                    // A diff fetch is also a remote observation — persist it
+                    // so the tree reflects any divergence it revealed. Skip
+                    // if the entry synced while the fetch was in flight.
+                    if let Some(entry) = self
+                        .store
+                        .get(&root, &rel_path)
+                        .filter(|e| e.last_synced <= started)
+                        .cloned()
+                    {
+                        let mut updated = entry;
+                        updated.remote_sha256 = full.remote_sha256;
+                        updated.remote_updated_at = Some(full.remote_updated_at);
+                        self.store.insert(&root, rel_path.clone(), updated);
+                        if let Err(e) = self.store.save() {
+                            self.status_message = format!("Store save failed: {e}");
+                        }
+                        self.refresh_status_for(&rel_path);
+                        self.rebuild_tree();
+                    }
+                    self.status_message = format!("{} {rel_path}", full.status.icon());
                     if let Mode::Diff { remote, .. } = &mut self.mode {
-                        *remote = remote_content;
+                        *remote = full.remote_content;
                     }
                 }
                 Err(e) => {
@@ -1385,12 +1520,14 @@ impl App {
         let Some(rel) = self.selected_file() else {
             return;
         };
-        self.do_sync_up_for(rel);
+        self.do_sync_up_for(rel, false);
     }
 
     /// Inner push implementation, parameterized by rel_path so bulk-push
-    /// can call it once per dirty file.
-    fn do_sync_up_for(&mut self, rel: String) {
+    /// can call it once per dirty file. Unless `force` is set, updates are
+    /// refused when the remote changed since the last sync; a PushBlocked
+    /// event then records the divergence and prompts for a force-push.
+    fn do_sync_up_for(&mut self, rel: String, force: bool) {
         let Some(token) = self.token.clone() else {
             self.status_message = "No GitHub token available.".into();
             return;
@@ -1421,12 +1558,30 @@ impl App {
 
         self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
-            let result = sync::push(&client, store_snapshot.as_ref(), &filename, &content).await;
-            let _ = tx.send(AsyncEvent::PushDone {
-                root: root_clone,
-                rel_path: rel_clone,
-                result: result.map_err(|e| e.to_string()),
-            });
+            let result =
+                sync::push(&client, store_snapshot.as_ref(), &filename, &content, force).await;
+            let event = match result {
+                Ok(sync::PushOutcome::Pushed(entry)) => AsyncEvent::PushDone {
+                    root: root_clone,
+                    rel_path: rel_clone,
+                    result: Ok(entry),
+                },
+                Ok(sync::PushOutcome::RemoteChanged {
+                    remote_sha256,
+                    remote_updated_at,
+                }) => AsyncEvent::PushBlocked {
+                    root: root_clone,
+                    rel_path: rel_clone,
+                    remote_sha256,
+                    remote_updated_at,
+                },
+                Err(e) => AsyncEvent::PushDone {
+                    root: root_clone,
+                    rel_path: rel_clone,
+                    result: Err(e.to_string()),
+                },
+            };
+            let _ = tx.send(event);
         });
     }
 
@@ -1458,6 +1613,11 @@ impl App {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
+        // Snapshot the local content's hash now; if the file changes on disk
+        // while the pull is in flight, the PullDone handler refuses to
+        // overwrite those edits.
+        let local_now = std::fs::read_to_string(self.abs_path(&rel)).unwrap_or_default();
+        let expected_local_sha256 = sync::sha256_hex(&local_now);
         let tx = self.async_tx.clone();
         let rel_clone = rel.clone();
         let root_clone = root.clone();
@@ -1470,6 +1630,7 @@ impl App {
             let _ = tx.send(AsyncEvent::PullDone {
                 root: root_clone,
                 rel_path: rel_clone,
+                expected_local_sha256,
                 result: result.map_err(|e| e.to_string()),
             });
         });
@@ -2175,6 +2336,7 @@ impl App {
         let tx = self.async_tx.clone();
         let gist_id = entry.gist_id.clone();
         let local_for_task = local_content.clone();
+        let started = chrono::Utc::now();
 
         self.status_message = "Fetching remote for diff...".into();
 
@@ -2182,7 +2344,9 @@ impl App {
             let client = gist_rs::GistClient::new(token);
             let result = sync::full_status(&client, &local_for_task, &entry, &filename).await;
             let _ = tx.send(AsyncEvent::StatusCheck {
+                root,
                 rel_path: rel,
+                started,
                 result: result.map_err(|e| e.to_string()),
             });
         });
@@ -2193,6 +2357,46 @@ impl App {
             local: local_content,
             remote: format!("(fetching remote content for {gist_id}...)"),
         };
+    }
+
+    /// Kick off a bulk remote check (`f`): list all gists once, fetch content
+    /// for any whose `updated_at` moved since we last looked, and record the
+    /// observed remote hashes. This is what makes remote edits show up as
+    /// ⬇️/❗ in the tree without pulling anything.
+    fn start_remote_check(&mut self) {
+        let Some(token) = self.token.clone() else {
+            self.status_message = "No GitHub token available.".into();
+            return;
+        };
+        let Some(root) = self.current_root().cloned() else {
+            self.status_message = "No active root.".into();
+            return;
+        };
+        let entries = match self.store.files_for_root(&root) {
+            Some(map) if !map.is_empty() => map.clone(),
+            _ => {
+                self.status_message = "No gist-mapped files to check.".into();
+                return;
+            }
+        };
+        let started = chrono::Utc::now();
+        let tx = self.async_tx.clone();
+
+        self.status_message = format!("Checking remote for {} mapped file(s)...", entries.len());
+
+        self.spawn_tracked(async move {
+            let client = gist_rs::GistClient::new(token);
+            let tx2 = tx.clone();
+            let result = crate::remote::check_remote(&client, &entries, move |done, total| {
+                let _ = tx2.send(AsyncEvent::RemoteCheckProgress { done, total });
+            })
+            .await;
+            let _ = tx.send(AsyncEvent::RemoteCheckDone {
+                root,
+                started,
+                result: result.map_err(|e| e.to_string()),
+            });
+        });
     }
 
     fn start_hydration(&mut self) {
@@ -2256,13 +2460,35 @@ impl App {
             local_sha256: am.local_hash.clone(),
             remote_sha256: am.local_hash.clone(),
             last_synced: chrono::Utc::now(),
+            remote_updated_at: None,
         };
         let rel = am.local_path.clone();
-        self.store.insert(&root, rel.clone(), entry);
+        self.store.insert(&root, rel.clone(), entry.clone());
         if let Err(e) = self.store.save() {
             self.status_message = format!("Pick saved in memory but disk save failed: {e}");
         } else {
             self.status_message = format!("Mapped {rel} → {}", cand.url);
+        }
+        // The candidates here failed the content match, so the remote almost
+        // certainly differs from local — fetch its real hash in the
+        // background so the tree shows the divergence instead of a
+        // fabricated "Synced".
+        if let Some(token) = self.token.clone() {
+            let filename = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+            let local_content = std::fs::read_to_string(self.abs_path(&rel)).unwrap_or_default();
+            let started = chrono::Utc::now();
+            let tx = self.async_tx.clone();
+            let rel_clone = rel.clone();
+            self.spawn_tracked(async move {
+                let client = gist_rs::GistClient::new(token);
+                let result = sync::full_status(&client, &local_content, &entry, &filename).await;
+                let _ = tx.send(AsyncEvent::StatusCheck {
+                    root,
+                    rel_path: rel_clone,
+                    started,
+                    result: result.map_err(|e| e.to_string()),
+                });
+            });
         }
     }
 
@@ -2567,7 +2793,7 @@ impl App {
                 let n = rels.len();
                 self.status_message = format!("Pushing {n} files...");
                 for rel in rels {
-                    self.do_sync_up_for(rel);
+                    self.do_sync_up_for(rel, false);
                 }
             }
             BulkAction::PullAllRemoteNewer { rels } => {

@@ -10,3 +10,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+wiremock = { workspace = true }

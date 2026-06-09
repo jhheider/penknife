@@ -7,6 +7,7 @@ mod git;
 mod glyphs;
 mod hydrate;
 mod picker;
+mod remote;
 mod replace;
 mod scanner;
 mod store;

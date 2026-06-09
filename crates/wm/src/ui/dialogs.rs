@@ -55,6 +55,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("X", "Delete remote gist (keeps local file)"),
                 ("_", "Move local file to system trash (with confirm)"),
                 ("D", "Diff local vs remote"),
+                ("f", "Check remote for changes (updates ⬇️/❗ icons)"),
                 ("H", "Hydrate — match existing gists to files"),
             ],
         ),

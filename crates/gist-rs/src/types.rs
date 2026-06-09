@@ -24,6 +24,10 @@ pub struct GistFile {
     pub content: Option<String>,
     #[serde(default)]
     pub language: Option<String>,
+    /// True when the API truncated `content` (files >1MB). The full body
+    /// must be fetched via `raw_url` (up to 10MB) or a git clone beyond that.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize)]

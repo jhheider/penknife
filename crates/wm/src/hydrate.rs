@@ -164,7 +164,10 @@ pub async fn hydrate(
             .unwrap_or(0);
 
         if gists.len() == 1 && locals == 1 {
-            // Unique match
+            // Unique filename match. Fetch the gist's actual content so the
+            // stored remote hash is real — recording the local hash here
+            // would fabricate a "Synced" state even when the remote differs,
+            // and the next push would silently overwrite it.
             let gist = gists[0];
             let local_content = match std::fs::read_to_string(&file.abs_path) {
                 Ok(c) => c,
@@ -173,18 +176,11 @@ pub async fn hydrate(
                     continue;
                 }
             };
-            let hash = sha256_hex(&local_content);
-            store.insert(
-                root,
-                file.rel_path.clone(),
-                FileEntry {
-                    gist_id: gist.id.clone(),
-                    url: gist.html_url.clone(),
-                    local_sha256: hash.clone(),
-                    remote_sha256: hash,
-                    last_synced: Utc::now(),
-                },
-            );
+            let Some(entry) = verified_entry(client, &gist.id, &filename, &local_content).await
+            else {
+                continue;
+            };
+            store.insert(root, file.rel_path.clone(), entry);
             matched += 1;
         }
 
@@ -258,20 +254,14 @@ pub async fn hydrate(
             .collect();
 
         if size_matches.len() == 1 {
+            // Size narrowed it to one candidate, but size-similar ≠
+            // identical — fetch the content so the remote hash is real.
             let gist = size_matches[0];
-            store.insert(
-                root,
-                file.rel_path.clone(),
-                FileEntry {
-                    gist_id: gist.id.clone(),
-                    url: gist.html_url.clone(),
-                    local_sha256: local_hash.clone(),
-                    remote_sha256: local_hash,
-                    last_synced: Utc::now(),
-                },
-            );
-            matched += 1;
-            continue;
+            if let Some(entry) = verified_entry(client, &gist.id, &filename, &local_content).await {
+                store.insert(root, file.rel_path.clone(), entry);
+                matched += 1;
+                continue;
+            }
         }
 
         // If size filter didn't help enough, try fetching content
@@ -282,9 +272,8 @@ pub async fn hydrate(
         let mut content_match = None;
         for gist in &size_matches {
             if let Ok(full_gist) = client.get(&gist.id).await
-                && let Some(gf) = full_gist.files.get(&filename)
-                && let Some(ref content) = gf.content
-                && sha256_hex(content) == local_hash
+                && let Ok(Some(content)) = client.file_content(&full_gist, &filename).await
+                && sha256_hex(&content) == local_hash
             {
                 content_match = Some(full_gist);
                 break;
@@ -301,6 +290,7 @@ pub async fn hydrate(
                     local_sha256: local_hash.clone(),
                     remote_sha256: local_hash,
                     last_synced: Utc::now(),
+                    remote_updated_at: Some(gist.updated_at),
                 },
             );
             matched += 1;
@@ -335,4 +325,97 @@ pub async fn hydrate(
     });
 
     Ok(HydrationOutcome { matched, ambiguous })
+}
+
+/// Build a store entry for a filename-matched gist with the *observed*
+/// remote hash, fetched from the gist itself. Returns None if the fetch
+/// fails (better to leave the file unmapped than to record a guess).
+async fn verified_entry(
+    client: &GistClient,
+    gist_id: &str,
+    filename: &str,
+    local_content: &str,
+) -> Option<FileEntry> {
+    let full = client.get(gist_id).await.ok()?;
+    let remote_content = client.file_content(&full, filename).await.ok()??;
+    Some(FileEntry {
+        gist_id: full.id.clone(),
+        url: full.html_url.clone(),
+        local_sha256: sha256_hex(local_content),
+        remote_sha256: sha256_hex(&remote_content),
+        last_synced: Utc::now(),
+        remote_updated_at: Some(full.updated_at),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn listed_gist(id: &str, filename: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "html_url": format!("https://gist.github.com/u/{id}"),
+            "description": null,
+            "public": false,
+            "files": {
+                filename: { "filename": filename, "size": 10, "raw_url": null }
+            },
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-06-01T00:00:00Z",
+        })
+    }
+
+    fn full_gist(id: &str, filename: &str, content: &str) -> serde_json::Value {
+        let mut v = listed_gist(id, filename);
+        v["files"][filename]["content"] = content.into();
+        v["files"][filename]["truncated"] = false.into();
+        v
+    }
+
+    /// A unique filename match must record the gist's *actual* content hash,
+    /// not assume remote == local — otherwise divergent remotes hydrate
+    /// straight into a fabricated "Synced" state.
+    #[tokio::test]
+    async fn unique_match_records_real_remote_hash() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/gists"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(vec![listed_gist("g1", "a.md")]))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/gists/g1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(full_gist(
+                "g1",
+                "a.md",
+                "remote content",
+            )))
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let abs = dir.path().join("a.md");
+        std::fs::write(&abs, "local content").unwrap();
+        let files = vec![ScannedFile {
+            rel_path: "a.md".into(),
+            abs_path: abs,
+            modified: std::time::SystemTime::UNIX_EPOCH,
+        }];
+
+        let client = GistClient::with_base_url("t".into(), server.uri());
+        let mut store = Store::default();
+        let outcome = hydrate(&client, &mut store, dir.path(), &files, |_| {})
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.matched, 1);
+        let entry = store.get(dir.path(), "a.md").expect("mapped");
+        assert_eq!(entry.local_sha256, sha256_hex("local content"));
+        assert_eq!(entry.remote_sha256, sha256_hex("remote content"));
+        assert_ne!(entry.local_sha256, entry.remote_sha256);
+        assert!(entry.remote_updated_at.is_some());
+    }
 }

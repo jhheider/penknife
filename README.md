@@ -1,11 +1,12 @@
-# gist-tools
+# writings-manager
 
 A terminal UI for managing local markdown files synced to GitHub Gists.
 
 ## Features
 
 - **Tree-based file browser** for one or more local writing directories, arbitrarily nested — supports `.md` and `.json` (with pretty-printed, syntax-highlighted JSON preview)
-- **Push / pull / delete** local markdown files to/from gists; per-file sync status with at-a-glance counts in the status bar
+- **Push / pull / delete** local markdown files to/from gists; per-file sync status with at-a-glance counts in the status bar. Pushes refuse to overwrite a remote that changed since the last sync (with a force option after review)
+- **Remote check** (`f`) — one cheap API listing detects gists edited on the web or another machine, lighting up the ⬇️/❗ icons without pulling anything
 - **Diff view** of local vs remote
 - **Open gist in browser** (`o`) and **copy gist URL** (`c`) for quick sharing
 - **Jump to next/previous dirty file** (`n` / `N`) for triage
@@ -27,8 +28,8 @@ A terminal UI for managing local markdown files synced to GitHub Gists.
 ### Install
 
 ```bash
-git clone git@github.com:jhheider/gist-tools.git
-cd gist-tools
+git clone git@github.com:jhheider/writings-manager.git
+cd writings-manager
 cargo build --release
 ./target/release/wm
 ```
@@ -91,6 +92,7 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `=` | Normal | Toggle JSON between compact and pretty form in place |
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
 | `_` | Normal | Move local file to the system trash (with confirmation) |
+| `f` | Normal | Check remote for changes (updates ⬇️/❗ icons and counts) |
 | `H` | Normal | Hydrate — match existing gists to files |
 | `I` | Normal | Import a Google Doc as markdown |
 | `R` | Normal | Switch root directory |
@@ -133,7 +135,7 @@ Each file in the tree carries a sync-state icon followed by a git-state icon (th
 Press `H` to match your existing gists to local files. Three phases:
 
 1. List all your gists (paginated, with retry/backoff and rate-limit handling).
-2. Auto-map files where filename + content hash give a unique match.
+2. Auto-map files with a unique filename match, fetching each gist's content so the recorded remote hash is real (a divergent remote hydrates as a conflict, not a fake "synced").
 3. For files where multiple gists share the same filename and no content match exists, the **ambiguous resolver** prompts you to pick one (or skip).
 
 Hydration runs in the background; concurrent push/pull is preserved (results merge rather than reload-from-disk).
