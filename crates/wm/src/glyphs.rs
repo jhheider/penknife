@@ -1,8 +1,12 @@
 use std::sync::OnceLock;
 
-/// Glyphs used throughout the UI. Two profiles: emoji (default) and ASCII
-/// (for terminals that don't render wide unicode well, or when the user
-/// sets `WM_NO_EMOJI`).
+/// Glyphs used throughout the UI. Three profiles:
+///
+/// - slim (default): single-column unicode symbols. Predictable widths, so
+///   tree rows and the status bar stay aligned in every terminal/font combo.
+/// - emoji: the original wide glyphs, opt-in via `WM_EMOJI=1` for terminals
+///   that render them well.
+/// - ASCII: pure 7-bit fallback, via `WM_NO_EMOJI` or a dumb `TERM`.
 pub struct Glyphs {
     pub status_synced: &'static str,
     pub status_local_newer: &'static str,
@@ -24,6 +28,28 @@ pub struct Glyphs {
     pub git_untracked: &'static str,
     pub git_clean: &'static str,
 }
+
+const SLIM: Glyphs = Glyphs {
+    status_synced: "✓",
+    status_local_newer: "↑",
+    status_remote_newer: "↓",
+    status_conflict: "!",
+    status_not_gisted: "·",
+    dir: "▸",
+    file_pane: "≡",
+    help: "?",
+    search: "/",
+    warn: "!",
+    info: "i",
+    root: "⌂",
+    hydrating: "~",
+    welcome: "»",
+    question: "?",
+    git_staged: "✦",
+    git_modified: "✱",
+    git_untracked: "?",
+    git_clean: " ",
+};
 
 const EMOJI: Glyphs = Glyphs {
     status_synced: "✅",
@@ -73,7 +99,17 @@ static GLYPHS: OnceLock<&'static Glyphs> = OnceLock::new();
 
 /// Get the active glyph set (initialized lazily on first call).
 pub fn glyphs() -> &'static Glyphs {
-    GLYPHS.get_or_init(|| if use_ascii() { &ASCII } else { &EMOJI })
+    GLYPHS.get_or_init(pick_profile)
+}
+
+fn pick_profile() -> &'static Glyphs {
+    if use_ascii() {
+        &ASCII
+    } else if std::env::var_os("WM_EMOJI").is_some() {
+        &EMOJI
+    } else {
+        &SLIM
+    }
 }
 
 fn use_ascii() -> bool {
@@ -84,4 +120,39 @@ fn use_ascii() -> bool {
         std::env::var("TERM").as_deref(),
         Ok("dumb" | "linux" | "vt100" | "vt220")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SLIM;
+    use unicode_width::UnicodeWidthStr;
+
+    /// The whole point of the slim profile is layout stability: every glyph
+    /// must occupy exactly one terminal column.
+    #[test]
+    fn slim_glyphs_are_single_width() {
+        for (name, s) in [
+            ("status_synced", SLIM.status_synced),
+            ("status_local_newer", SLIM.status_local_newer),
+            ("status_remote_newer", SLIM.status_remote_newer),
+            ("status_conflict", SLIM.status_conflict),
+            ("status_not_gisted", SLIM.status_not_gisted),
+            ("dir", SLIM.dir),
+            ("file_pane", SLIM.file_pane),
+            ("help", SLIM.help),
+            ("search", SLIM.search),
+            ("warn", SLIM.warn),
+            ("info", SLIM.info),
+            ("root", SLIM.root),
+            ("hydrating", SLIM.hydrating),
+            ("welcome", SLIM.welcome),
+            ("question", SLIM.question),
+            ("git_staged", SLIM.git_staged),
+            ("git_modified", SLIM.git_modified),
+            ("git_untracked", SLIM.git_untracked),
+            ("git_clean", SLIM.git_clean),
+        ] {
+            assert_eq!(s.width(), 1, "glyph `{name}` ({s:?}) is not 1 column wide");
+        }
+    }
 }

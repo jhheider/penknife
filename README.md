@@ -120,15 +120,15 @@ By default, mouse capture is **off** so terminal-native features (cmd-click on U
 
 ### Status icons
 
-Each file in the tree carries a sync-state icon followed by a git-state icon (the latter is blank for clean / not-in-repo). By default both columns use emoji; set `WM_NO_EMOJI=1` (or run under a `TERM` of `dumb`/`linux`/`vt100`/`vt220`) to fall back to ASCII.
+Each file in the tree carries a sync-state icon followed by a git-state icon (the latter is blank for clean / not-in-repo). By default both columns use slim single-width unicode glyphs so rows stay aligned in every terminal/font combo. Set `WM_EMOJI=1` to opt into the wide emoji set, or `WM_NO_EMOJI=1` (or run under a `TERM` of `dumb`/`linux`/`vt100`/`vt220`) to fall back to pure ASCII.
 
-| Emoji | ASCII | Meaning |
-|---|---|---|
-| ✅ | `[=]` | Synced |
-| ⬆️ | `[^]` | Local newer (push to update) |
-| ⬇️ | `[v]` | Remote newer (pull to update) |
-| ❗ | `[!]` | Conflict — both diverged |
-| ⚪ | `[ ]` | Not yet mapped to a gist |
+| Slim (default) | Emoji | ASCII | Meaning |
+|---|---|---|---|
+| `✓` | ✅ | `[=]` | Synced |
+| `↑` | ⬆️ | `[^]` | Local newer (push to update) |
+| `↓` | ⬇️ | `[v]` | Remote newer (pull to update) |
+| `!` | ❗ | `[!]` | Conflict — both diverged |
+| `·` | ⚪ | `[ ]` | Not yet mapped to a gist |
 
 ### Hydration
 

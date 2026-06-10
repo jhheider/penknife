@@ -4269,6 +4269,7 @@ dependencies = [
  "toml",
  "trash",
  "tui-tree-widget",
+ "unicode-width",
  "wiremock",
 ]
 
