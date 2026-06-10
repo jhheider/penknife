@@ -39,7 +39,11 @@ pub fn hints(mode: &Mode, focused_pane: PaneFocus) -> Vec<Hint> {
         Mode::Diff { .. } => vec![("j/k", "scroll"), ("PgUp/PgDn", "page"), ("Esc", "close")],
         Mode::Confirm { .. } => vec![("y/Enter", "yes"), ("n/Esc", "no")],
         Mode::FilePicker { .. } => vec![("↑/↓", "select"), ("Enter", "open"), ("Esc", "cancel")],
-        Mode::GdocUrl | Mode::GdocFilename | Mode::Rename { .. } | Mode::AddRoot => {
+        Mode::GdocUrl
+        | Mode::GdocFilename
+        | Mode::Rename { .. }
+        | Mode::LinkGist { .. }
+        | Mode::AddRoot => {
             vec![("Enter", "confirm"), ("Esc", "cancel")]
         }
         Mode::SetupRoot => vec![("Enter", "confirm"), ("Ctrl+Q", "quit")],

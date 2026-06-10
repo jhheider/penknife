@@ -26,6 +26,7 @@ impl App {
             Mode::ReplaceTarget => self.handle_replace_target_key(key),
             Mode::ReplaceReview { .. } => self.handle_replace_review_key(key),
             Mode::Rename { .. } => self.handle_rename_key(key),
+            Mode::LinkGist { .. } => self.handle_link_gist_key(key),
             Mode::SortMenu { .. } => self.handle_sort_menu_key(key),
             Mode::BulkMenu { .. } => self.handle_bulk_menu_key(key),
             Mode::Normal => self.handle_normal_key(key),
@@ -84,6 +85,9 @@ impl App {
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
             KeyCode::Char('_') => self.confirm_trash_local(),
             KeyCode::Char('m') => self.start_rename(),
+            KeyCode::Char('L') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.start_manual_link();
+            }
             KeyCode::Char('O') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_sort_menu();
             }
@@ -454,6 +458,26 @@ impl App {
                 let new_rel = self.input_editor.content.trim().to_string();
                 self.mode = Mode::Normal;
                 self.do_rename(old_rel, new_rel);
+            }
+            _ => {
+                self.input_editor.handle_key(key);
+            }
+        }
+    }
+
+    fn handle_link_gist_key(&mut self, key: KeyEvent) {
+        let Mode::LinkGist { rel_path } = &self.mode else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                let rel_path = rel_path.clone();
+                let raw = self.input_editor.content.trim().to_string();
+                self.mode = Mode::Normal;
+                self.link_gist_to(rel_path, &raw);
             }
             _ => {
                 self.input_editor.handle_key(key);

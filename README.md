@@ -93,7 +93,8 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
 | `_` | Normal | Move local file to the system trash (with confirmation) |
 | `f` | Normal | Check remote for changes (updates ⬇️/❗ icons and counts) |
-| `H` | Normal | Hydrate — match existing gists to files |
+| `H` | Normal | Hydrate — match existing gists to files (incremental; see below) |
+| `L` | Normal | Link the selected file to an existing gist by URL or ID |
 | `I` | Normal | Import a Google Doc as markdown |
 | `R` | Normal | Switch root directory |
 | `r` | Normal | Refresh the tree |
@@ -139,6 +140,12 @@ Press `H` to match your existing gists to local files. Three phases:
 3. For files where multiple gists share the same filename and no content match exists, the **ambiguous resolver** prompts you to pick one (or skip).
 
 Hydration runs in the background; concurrent push/pull is preserved (results merge rather than reload-from-disk).
+
+**Incremental.** After a root's first full walk, the store records a per-root `last_hydrated` timestamp. Subsequent runs pass it as GitHub's `since=` filter, so `H` fetches only gists changed since the last walk instead of re-listing your whole account — fast even with hundreds of gists. The cursor advances on every successful run, and is kept per-root (each root does its own first full walk, since a gist that doesn't match one root's files may match another's).
+
+### Manual linking
+
+Hydration only auto-pairs a local file with a gist when their filenames match. For a gist created elsewhere (the web UI, a phone) whose filename differs — or that you simply want to attach by hand — select the file and press `L`, then paste the gist URL (`https://gist.github.com/<user>/<id>`) or the bare ID. The gist is fetched, reconciled against the local content, and recorded; the tree then shows whether the two are in sync or have diverged (use `D` to diff, `u`/`d` to reconcile). A multi-file gist must share a filename with the local file (otherwise the pairing is ambiguous and is refused).
 
 ## Architecture
 

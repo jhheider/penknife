@@ -97,7 +97,23 @@ impl GistClient {
 
     /// List a single page of gists (100 per page) along with pagination metadata.
     pub async fn list_page(&self, page: u32) -> Result<GistPage> {
-        let url = format!("{}/gists?per_page=100&page={page}", self.base_url);
+        self.list_page_since(page, None).await
+    }
+
+    /// Like [`list_page`], but optionally constrained to gists updated after
+    /// `since` via GitHub's `since=` filter. Used for incremental hydration:
+    /// pass the last-walk timestamp to fetch only the delta instead of every
+    /// gist. `since` is formatted as RFC3339 (`…Z`), which the API expects.
+    pub async fn list_page_since(
+        &self,
+        page: u32,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<GistPage> {
+        let mut url = format!("{}/gists?per_page=100&page={page}", self.base_url);
+        if let Some(ts) = since {
+            url.push_str("&since=");
+            url.push_str(&ts.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        }
         let resp = self.get_with_retry(&url).await?;
         let has_next = resp
             .headers()
@@ -425,6 +441,29 @@ mod tests {
         ));
         let err = client.file_content(&gist, "a.md").await.unwrap_err();
         assert!(matches!(err, GistError::TooLarge { size, .. } if size == RAW_FETCH_LIMIT + 1));
+    }
+
+    #[tokio::test]
+    async fn list_page_since_sends_since_query_param() {
+        use wiremock::matchers::query_param;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/gists"))
+            .and(query_param("since", "2024-06-01T00:00:00Z"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(vec![gist_json("g1", "a.md", None, false, 1, None)]),
+            )
+            .mount(&server)
+            .await;
+        let client = GistClient::with_base_url("t".into(), server.uri());
+        let since = chrono::DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        // The mock only matches when the since param is present and exact; a
+        // missing/wrong param would 404 and surface as an error here.
+        let page = client.list_page_since(1, Some(since)).await.unwrap();
+        assert_eq!(page.gists.len(), 1);
     }
 
     #[tokio::test]

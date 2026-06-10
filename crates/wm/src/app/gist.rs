@@ -169,6 +169,9 @@ impl App {
                     // rather than reloading from disk (which would clobber any
                     // concurrent push/pull that completed during hydration).
                     self.store.merge_from(&data.store);
+                    // Advance this root's incremental cursor so the next
+                    // hydrate only fetches gists changed after this walk began.
+                    self.store.set_hydrated_cursor(&data.root, data.new_cursor);
                     if let Err(e) = self.store.save() {
                         self.status_message = format!("Hydration ok but save failed: {e}");
                     }
@@ -247,6 +250,32 @@ impl App {
                 }
                 Err(e) => {
                     self.status_message = format!("Renamed locally; remote rename failed: {e}");
+                }
+            },
+            AsyncEvent::LinkDone {
+                root,
+                rel_path,
+                result,
+            } => match result {
+                Ok(entry) => {
+                    let url = entry.url.clone();
+                    let synced = entry.local_sha256 == entry.remote_sha256;
+                    self.store.insert(&root, rel_path.clone(), entry);
+                    if let Err(e) = self.store.save() {
+                        self.status_message = format!("Linked but store save failed: {e}");
+                        return;
+                    }
+                    self.refresh_status_for(&rel_path);
+                    self.rebuild_tree();
+                    self.update_status();
+                    self.status_message = if synced {
+                        format!("Linked {rel_path} → {url} (in sync)")
+                    } else {
+                        format!("Linked {rel_path} → {url} (differs — D to diff, u/d to reconcile)")
+                    };
+                }
+                Err(e) => {
+                    self.status_message = format!("Link failed: {e}");
                 }
             },
             AsyncEvent::GdocFetched(result) => match result {
@@ -602,6 +631,12 @@ impl App {
         };
         let tx = self.async_tx.clone();
         let files = self.files.clone();
+        // Incremental cursor: only walk gists updated since this root's last
+        // hydrate. None on a root's first walk → full. Capture the new cursor
+        // *now*, before listing, so anything created during the walk is
+        // re-examined next time rather than skipped.
+        let since = self.store.hydrated_cursor(&root);
+        let new_cursor = chrono::Utc::now();
         // Snapshot only this root's mappings; we'll merge results back when done.
         let mut store = Store::default();
         if let Some(map) = self.store.files_for_root(&root) {
@@ -613,15 +648,23 @@ impl App {
         self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
             let tx2 = tx.clone();
-            let result =
-                crate::hydrate::hydrate(&client, &mut store, &root, &files, move |progress| {
+            let result = crate::hydrate::hydrate(
+                &client,
+                &mut store,
+                &root,
+                &files,
+                since,
+                move |progress| {
                     let _ = tx2.send(AsyncEvent::HydrationUpdate(progress));
-                })
-                .await;
+                },
+            )
+            .await;
             let payload = result.map(|outcome| crate::event::HydrationDoneData {
                 matched: outcome.matched,
                 ambiguous: outcome.ambiguous,
                 store: Box::new(store),
+                root,
+                new_cursor,
             });
             let _ = tx.send(AsyncEvent::HydrationDone(
                 payload.map_err(|e| e.to_string()),
@@ -677,5 +720,157 @@ impl App {
                 });
             });
         }
+    }
+
+    /// `L`: begin manually linking the selected file to an existing gist.
+    /// Opens an input prompt for a gist URL or bare ID.
+    pub(crate) fn start_manual_link(&mut self) {
+        let Some(rel_path) = self.selected_file() else {
+            self.status_message = "Select a file to link first.".into();
+            return;
+        };
+        self.input_editor = LineEditor::new();
+        self.mode = Mode::LinkGist { rel_path };
+    }
+
+    /// Fetch `raw` (a gist URL or ID), reconcile it against the local file at
+    /// `rel_path`, and record the mapping. The fetch happens off-thread; the
+    /// store write lands in the `LinkDone` handler.
+    pub(crate) fn link_gist_to(&mut self, rel_path: String, raw: &str) {
+        let Some(token) = self.token.clone() else {
+            self.status_message = "No GitHub token available.".into();
+            return;
+        };
+        let Some(root) = self.active_root_path() else {
+            self.status_message = "No active root.".into();
+            return;
+        };
+        let Some(gist_id) = parse_gist_id(raw) else {
+            self.status_message = format!("Couldn't read a gist ID from '{raw}'.");
+            return;
+        };
+        // Read local content now (main thread) so the task only does network.
+        let local_content = std::fs::read_to_string(self.abs_path(&rel_path)).unwrap_or_default();
+        let filename = rel_path.rsplit('/').next().unwrap_or(&rel_path).to_string();
+        let tx = self.async_tx.clone();
+        self.status_message = format!("Linking {rel_path} → gist {gist_id}...");
+        self.spawn_tracked(async move {
+            let client = gist_rs::GistClient::new(token);
+            let result = build_link_entry(&client, &gist_id, &filename, &local_content).await;
+            let _ = tx.send(AsyncEvent::LinkDone {
+                root,
+                rel_path,
+                result: result.map_err(|e| e.to_string()),
+            });
+        });
+    }
+}
+
+/// Reconcile a gist (fetched by ID) against a local file: pick the matching
+/// file within the gist, fetch its content, and build a store entry carrying
+/// both the local and the *observed* remote hash so the resulting status is
+/// honest (Synced only when they truly match).
+async fn build_link_entry(
+    client: &gist_rs::GistClient,
+    gist_id: &str,
+    local_filename: &str,
+    local_content: &str,
+) -> crate::error::Result<FileEntry> {
+    use crate::error::WmError;
+    let gist = client.get(gist_id).await?;
+    // Prefer the gist file whose name matches the local basename; fall back to
+    // the sole file in a single-file gist. A multi-file gist with no name
+    // match is genuinely ambiguous — refuse rather than guess.
+    let chosen = if gist.files.contains_key(local_filename) {
+        local_filename.to_string()
+    } else if gist.files.len() == 1 {
+        gist.files.keys().next().cloned().expect("len==1 has a key")
+    } else if gist.files.is_empty() {
+        return Err(WmError::Other(format!("Gist {gist_id} has no files.")));
+    } else {
+        let names: Vec<&str> = gist.files.keys().map(|s| s.as_str()).collect();
+        return Err(WmError::Other(format!(
+            "Gist {gist_id} has multiple files ({}); none named '{local_filename}'. \
+             Rename the local file to match one, or link via a single-file gist.",
+            names.join(", ")
+        )));
+    };
+    let remote_content = client
+        .file_content(&gist, &chosen)
+        .await?
+        .unwrap_or_default();
+    Ok(FileEntry {
+        gist_id: gist.id.clone(),
+        url: gist.html_url.clone(),
+        local_sha256: sync::sha256_hex(local_content),
+        remote_sha256: sync::sha256_hex(&remote_content),
+        last_synced: chrono::Utc::now(),
+        remote_updated_at: Some(gist.updated_at),
+    })
+}
+
+/// Extract a gist ID from a URL or bare ID. Accepts the GitHub web URL form
+/// (`https://gist.github.com/user/<id>` or `.../<id>`), an optional `.git`
+/// suffix, trailing slashes, and a `#file-…` fragment. A bare token with no
+/// slash is taken as the ID itself. Returns `None` if nothing ID-shaped
+/// (alphanumeric) remains.
+fn parse_gist_id(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    // Drop any URL fragment / query, then trailing slashes.
+    let no_frag = trimmed.split(['#', '?']).next().unwrap_or(trimmed);
+    let no_slash = no_frag.trim_end_matches('/');
+    // The ID is the last path segment, minus an optional `.git`.
+    let last = no_slash.rsplit('/').next().unwrap_or(no_slash);
+    let id = last.strip_suffix(".git").unwrap_or(last);
+    if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_gist_id;
+
+    #[test]
+    fn parses_full_web_url() {
+        assert_eq!(
+            parse_gist_id("https://gist.github.com/jhheider/0828a8e1bbdb66e7e082b054c9e975e3"),
+            Some("0828a8e1bbdb66e7e082b054c9e975e3".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_bare_id() {
+        assert_eq!(
+            parse_gist_id("0828a8e1bbdb66e7e082b054c9e975e3"),
+            Some("0828a8e1bbdb66e7e082b054c9e975e3".to_string())
+        );
+    }
+
+    #[test]
+    fn strips_git_suffix_trailing_slash_and_fragment() {
+        assert_eq!(
+            parse_gist_id("https://gist.github.com/u/abc123.git"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            parse_gist_id("https://gist.github.com/u/abc123/"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            parse_gist_id("https://gist.github.com/u/abc123#file-foo-md"),
+            Some("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_empty_or_nonalphanumeric() {
+        // Nothing ID-shaped left → None. A merely-wrong-but-alphanumeric
+        // segment is accepted and left to 404 on the actual fetch.
+        assert_eq!(parse_gist_id(""), None);
+        assert_eq!(parse_gist_id("   "), None);
+        assert_eq!(parse_gist_id("not a/url!"), None);
     }
 }

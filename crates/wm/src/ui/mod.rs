@@ -259,6 +259,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 &app.input_editor,
             );
         }
+        Mode::LinkGist { rel_path } => {
+            dialogs::render_input_dialog(
+                f,
+                f.area(),
+                "Link to gist",
+                &format!("Gist URL or ID to link to {rel_path}:"),
+                &app.input_editor,
+            );
+        }
         Mode::SortMenu { selected } => {
             dialogs::render_sort_menu(f, f.area(), app, *selected);
         }

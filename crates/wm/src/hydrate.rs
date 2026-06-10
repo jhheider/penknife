@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use gist_rs::{Gist, GistClient};
 
 use crate::error::Result;
@@ -42,18 +42,28 @@ pub struct HydrationOutcome {
 /// Run the full hydration algorithm. Calls `progress_cb` with updates.
 /// Mutations are scoped to `root` in the store. The caller is responsible
 /// for persisting `store` after merging results.
+///
+/// `since`, when set, restricts the gist listing to those updated after the
+/// timestamp (GitHub's `since=` filter) — an incremental walk that avoids
+/// re-listing the whole account every time. A new account, or a forced full
+/// re-scan, passes `None`.
 pub async fn hydrate(
     client: &GistClient,
     store: &mut Store,
     root: &Path,
     files: &[ScannedFile],
+    since: Option<DateTime<Utc>>,
     mut progress_cb: impl FnMut(HydrationProgress),
 ) -> Result<HydrationOutcome> {
     let total_files = files.len();
 
-    // Phase 1: Fetch all gists page by page
+    // Phase 1: Fetch gists page by page (constrained to `since` if given).
+    let scope = match since {
+        Some(ts) => format!("since {}", ts.format("%Y-%m-%d %H:%M")),
+        None => "all".into(),
+    };
     progress_cb(HydrationProgress {
-        phase: "Fetching gists... page 1".into(),
+        phase: format!("Fetching gists ({scope})... page 1"),
         matched: 0,
         total_gists: 0,
         total_files,
@@ -64,7 +74,7 @@ pub async fn hydrate(
     let mut all_gists: Vec<Gist> = Vec::new();
     let mut page = 1u32;
     loop {
-        let result = client.list_page(page).await?;
+        let result = client.list_page_since(page, since).await?;
         all_gists.extend(result.gists);
         if !result.has_next {
             break;
@@ -407,7 +417,7 @@ mod tests {
 
         let client = GistClient::with_base_url("t".into(), server.uri());
         let mut store = Store::default();
-        let outcome = hydrate(&client, &mut store, dir.path(), &files, |_| {})
+        let outcome = hydrate(&client, &mut store, dir.path(), &files, None, |_| {})
             .await
             .unwrap();
 

@@ -87,7 +87,8 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("_", "Move local file to system trash (with confirm)"),
                 ("D", "Diff local vs remote"),
                 ("f", "Check remote for changes (updates status icons)"),
-                ("H", "Hydrate — match existing gists to files"),
+                ("H", "Hydrate — match existing gists to files (incremental)"),
+                ("L", "Link selected file to an existing gist by URL/ID"),
             ],
         ),
         (

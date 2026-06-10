@@ -12,6 +12,12 @@ pub struct HydrationDoneData {
     pub matched: usize,
     pub ambiguous: Vec<AmbiguousMatch>,
     pub store: Box<Store>,
+    /// The root this walk covered — the per-root hydration cursor is keyed by it.
+    pub root: PathBuf,
+    /// The timestamp to record as `root`'s new hydration cursor — captured
+    /// when the walk began, so gists created mid-walk are caught on the next
+    /// pass rather than skipped.
+    pub new_cursor: chrono::DateTime<chrono::Utc>,
 }
 
 /// Messages from async tasks back to the main UI loop.
@@ -76,6 +82,13 @@ pub enum AsyncEvent {
         root: PathBuf,
         rel_path: String,
         result: std::result::Result<(), String>,
+    },
+    /// Manual link (`L`) completed: a gist was fetched and reconciled against
+    /// the selected local file. On success carries the store entry to record.
+    LinkDone {
+        root: PathBuf,
+        rel_path: String,
+        result: std::result::Result<crate::store::FileEntry, String>,
     },
     /// Remote gist filename update (companion to a local rename) completed.
     /// `rel_path` here is the new rel_path (for the status message);

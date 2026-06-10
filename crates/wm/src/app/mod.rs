@@ -78,6 +78,14 @@ pub enum Mode {
     Rename {
         old_rel: String,
     },
+    /// Manually link the selected file to an existing gist. The input editor
+    /// holds a gist URL or bare ID; Enter fetches it and records the mapping.
+    /// Used for gists created outside the app (e.g. the GitHub web UI) whose
+    /// filename doesn't match the local file, so hydration can't auto-pair
+    /// them.
+    LinkGist {
+        rel_path: String,
+    },
     /// Modal picker for the tree's sort order. `selected` indexes into
     /// `SortMode::all()`.
     SortMenu {
@@ -231,7 +239,7 @@ pub enum PaneFocus {
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
-    'H', 'r', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')', 'f',
+    'H', 'r', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')', 'f', 'L',
 ];
 
 impl App {

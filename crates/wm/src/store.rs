@@ -29,6 +29,16 @@ pub struct Store {
     pub version: u32,
     /// Per-root file maps. Key is the canonical absolute path of the root directory.
     pub roots: BTreeMap<PathBuf, BTreeMap<String, FileEntry>>,
+    /// Per-root timestamp of the last successful hydration walk, keyed by
+    /// canonical root path. On the next hydrate for that root we pass it as
+    /// the GitHub `since=` filter to fetch only gists updated after it,
+    /// instead of re-listing every gist. The cursor is per-root (not global)
+    /// because gists are account-wide: a gist that didn't match root A's
+    /// files may still match root B's, so each root must do its own full
+    /// first walk before going incremental. A missing entry forces a full
+    /// walk, which then records the cursor.
+    #[serde(default)]
+    pub last_hydrated: BTreeMap<PathBuf, DateTime<Utc>>,
 }
 
 impl Default for Store {
@@ -36,6 +46,7 @@ impl Default for Store {
         Self {
             version: CURRENT_VERSION,
             roots: BTreeMap::new(),
+            last_hydrated: BTreeMap::new(),
         }
     }
 }
@@ -106,6 +117,18 @@ impl Store {
         self.roots.get(&key)
     }
 
+    /// The incremental-hydration cursor for `root`, if one has been recorded.
+    pub fn hydrated_cursor(&self, root: &Path) -> Option<DateTime<Utc>> {
+        let key = canonicalize_root(root);
+        self.last_hydrated.get(&key).copied()
+    }
+
+    /// Record `ts` as the hydration cursor for `root` (set after a successful walk).
+    pub fn set_hydrated_cursor(&mut self, root: &Path, ts: DateTime<Utc>) {
+        let key = canonicalize_root(root);
+        self.last_hydrated.insert(key, ts);
+    }
+
     /// Merge entries from another store into this one, root-by-root.
     /// Existing entries in `self` are overwritten by entries from `other`.
     pub fn merge_from(&mut self, other: &Store) {
@@ -161,6 +184,7 @@ fn migrate_v1_value(value: &serde_json::Value, roots: &[PathBuf]) -> Result<Stor
     Ok(Store {
         version: CURRENT_VERSION,
         roots: grouped,
+        last_hydrated: BTreeMap::new(),
     })
 }
 
@@ -231,5 +255,18 @@ mod tests {
     fn get_returns_none_for_unknown_root() {
         let store = Store::default();
         assert!(store.get(Path::new("/missing"), "anything.md").is_none());
+    }
+
+    #[test]
+    fn hydration_cursor_is_per_root() {
+        let mut store = Store::default();
+        let a = PathBuf::from("/r-a");
+        let b = PathBuf::from("/r-b");
+        assert!(store.hydrated_cursor(&a).is_none());
+        let t = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        store.set_hydrated_cursor(&a, t);
+        assert_eq!(store.hydrated_cursor(&a), Some(t));
+        // Setting one root's cursor must not bleed into another.
+        assert!(store.hydrated_cursor(&b).is_none());
     }
 }
