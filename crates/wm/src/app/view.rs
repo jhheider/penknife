@@ -93,7 +93,7 @@ impl App {
     /// result. Subsequent calls in this refresh cycle (tree render, sort,
     /// dashboard counts, bulk menu) read from the cache instead of repeating
     /// the IO. Must be called *after* `self.files` is populated.
-    fn refresh_status_cache(&mut self) {
+    pub(crate) fn refresh_status_cache(&mut self) {
         self.status_cache.clear();
         let Some(root) = self.current_root().cloned() else {
             return;

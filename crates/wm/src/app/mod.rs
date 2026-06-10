@@ -321,8 +321,12 @@ impl App {
             git_statuses: std::collections::HashMap::new(),
             status_cache: std::collections::HashMap::new(),
         };
-        // Populate git status before the first tree build so leaf glyphs
-        // show the right state without needing an explicit refresh first.
+        // Populate the per-file sync-status cache and git status before the
+        // first tree build so leaf glyphs reflect the loaded store right away.
+        // Without the status pass, every file paints as NotGisted until the
+        // first `r` ran `refresh_files` — making a freshly-loaded store look
+        // entirely unsynced.
+        app.refresh_status_cache();
         app.refresh_git_status();
         app.rebuild_tree();
         app.update_status();
