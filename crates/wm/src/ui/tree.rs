@@ -47,6 +47,12 @@ pub fn build_tree<'a>(
         cur.files.push(file);
     }
 
+    // Pre-pass: recursively tally each directory's subtree by sync status, so
+    // directory rows can trail a rolled-up summary like `[9 3 1 12]`. Computed
+    // once here off the cached statuses — no IO.
+    let mut dir_counts: HashMap<String, [usize; 5]> = HashMap::new();
+    tally_dirs(&root_node, "", status_cache, &mut dir_counts);
+
     let mut identifiers = Vec::new();
     let mut file_ids: HashSet<String> = HashSet::new();
     let items = render_node(
@@ -54,6 +60,7 @@ pub fn build_tree<'a>(
         "",
         status_cache,
         git_statuses,
+        &dir_counts,
         &mut identifiers,
         &mut file_ids,
     );
@@ -65,11 +72,64 @@ pub fn build_tree<'a>(
     }
 }
 
+/// Canonical order of statuses in the directory summary gutter, and the index
+/// each maps to in the `[usize; 5]` count arrays.
+const STATUS_ORDER: [SyncStatus; 5] = [
+    SyncStatus::Synced,
+    SyncStatus::LocalNewer,
+    SyncStatus::RemoteNewer,
+    SyncStatus::Conflict,
+    SyncStatus::NotGisted,
+];
+
+fn status_index(s: SyncStatus) -> usize {
+    match s {
+        SyncStatus::Synced => 0,
+        SyncStatus::LocalNewer => 1,
+        SyncStatus::RemoteNewer => 2,
+        SyncStatus::Conflict => 3,
+        SyncStatus::NotGisted => 4,
+    }
+}
+
+/// Recursively accumulate per-directory subtree counts (by sync status) into
+/// `out`, keyed by directory id. Returns this node's own subtree totals so the
+/// parent can fold them in.
+fn tally_dirs(
+    node: &Node,
+    prefix: &str,
+    cache: &HashMap<String, SyncStatus>,
+    out: &mut HashMap<String, [usize; 5]>,
+) -> [usize; 5] {
+    let mut total = [0usize; 5];
+    for (name, child) in &node.children {
+        let dir_id = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let sub = tally_dirs(child, &dir_id, cache, out);
+        for i in 0..5 {
+            total[i] += sub[i];
+        }
+        out.insert(dir_id, sub);
+    }
+    for f in &node.files {
+        let s = cache
+            .get(&f.rel_path)
+            .copied()
+            .unwrap_or(SyncStatus::NotGisted);
+        total[status_index(s)] += 1;
+    }
+    total
+}
+
 fn render_node<'a>(
     node: &Node,
     prefix: &str,
     status_cache: &HashMap<String, SyncStatus>,
     git_statuses: &HashMap<String, GitStatus>,
+    dir_counts: &HashMap<String, [usize; 5]>,
     identifiers: &mut Vec<String>,
     file_ids: &mut HashSet<String>,
 ) -> Vec<TreeItem<'a, String>> {
@@ -87,13 +147,14 @@ fn render_node<'a>(
             &dir_id,
             status_cache,
             git_statuses,
+            dir_counts,
             identifiers,
             file_ids,
         );
+        let counts = dir_counts.get(&dir_id).copied().unwrap_or([0; 5]);
+        let label = format_directory(name, &counts);
         identifiers.push(dir_id.clone());
-        items.push(
-            TreeItem::new(dir_id, format_directory(name), children).expect("unique tree item id"),
-        );
+        items.push(TreeItem::new(dir_id, label, children).expect("unique tree item id"));
     }
 
     // Then files (preserve scanner-supplied order = mtime desc).
@@ -143,9 +204,9 @@ fn format_leaf(rel_path: &str, status: SyncStatus, git: Option<GitStatus>) -> Li
     ])
 }
 
-fn format_directory(name: &str) -> Line<'static> {
+fn format_directory(name: &str, counts: &[usize; 5]) -> Line<'static> {
     let g = crate::glyphs::glyphs();
-    Line::from(vec![
+    let mut spans = vec![
         Span::raw(format!("{} ", g.dir)),
         Span::styled(
             name.to_string(),
@@ -153,7 +214,36 @@ fn format_directory(name: &str) -> Line<'static> {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-    ])
+    ];
+
+    // Trailing summary: the subtree's non-zero status counts as color-only
+    // numbers in a bracketed block, e.g. `[9 3 1 12]`. The color *is* the
+    // legend — green synced, yellow local-newer, blue remote-newer, red
+    // conflict, grey not-gisted (matching the status bar and file icons).
+    // Brackets are dimmed so they frame without competing. A fully-empty
+    // subtree (no files anywhere) shows nothing.
+    if counts.iter().any(|&n| n > 0) {
+        let dim = Style::default().fg(Color::DarkGray);
+        spans.push(Span::styled("  [", dim));
+        let mut first = true;
+        for st in STATUS_ORDER {
+            let n = counts[status_index(st)];
+            if n == 0 {
+                continue;
+            }
+            if !first {
+                spans.push(Span::raw(" "));
+            }
+            spans.push(Span::styled(
+                n.to_string(),
+                Style::default().fg(st.color()).add_modifier(Modifier::BOLD),
+            ));
+            first = false;
+        }
+        spans.push(Span::styled("]", dim));
+    }
+
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -182,6 +272,34 @@ mod tests {
         assert!(built.identifiers.contains(&"a/b/c".to_string()));
         assert!(built.file_ids.contains("a/b/c/d.md"));
         assert!(built.file_ids.contains("a/f.md"));
+    }
+
+    #[test]
+    fn dir_counts_roll_up_recursively_and_omit_zeros() {
+        // a/b/c/d.md (synced), a/b/c/e.md (local-newer), a/f.md (not-gisted).
+        let files = vec![sf("a/b/c/d.md"), sf("a/b/c/e.md"), sf("a/f.md")];
+        let mut cache = HashMap::new();
+        cache.insert("a/b/c/d.md".to_string(), SyncStatus::Synced);
+        cache.insert("a/b/c/e.md".to_string(), SyncStatus::LocalNewer);
+        cache.insert("a/f.md".to_string(), SyncStatus::NotGisted);
+
+        let mut root = Node::default();
+        for f in &files {
+            let mut parts: Vec<&str> = f.rel_path.split('/').collect();
+            parts.pop();
+            let mut cur = &mut root;
+            for d in parts {
+                cur = cur.children.entry(d.to_string()).or_default();
+            }
+            cur.files.push(f);
+        }
+        let mut out = HashMap::new();
+        let total = tally_dirs(&root, "", &cache, &mut out);
+        // Whole tree: 1 synced, 1 local-newer, 1 not-gisted.
+        assert_eq!(total, [1, 1, 0, 0, 1]);
+        // "a" subtree == everything; "a/b/c" holds only the two gisted files.
+        assert_eq!(out["a"], [1, 1, 0, 0, 1]);
+        assert_eq!(out["a/b/c"], [1, 1, 0, 0, 0]);
     }
 
     #[test]
