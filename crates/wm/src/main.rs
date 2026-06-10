@@ -7,10 +7,12 @@ mod git;
 mod glyphs;
 mod hydrate;
 mod picker;
+mod remote;
 mod replace;
 mod scanner;
 mod store;
 mod sync;
+mod sync_apply;
 mod ui;
 
 use std::io;

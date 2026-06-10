@@ -1,11 +1,14 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
+use unicode_width::UnicodeWidthChar;
 
 use crate::app::App;
 use crate::hydrate::HydrationProgress;
 use crate::ui::input::LineEditor;
 
-/// Render a centered modal overlay.
+/// Render a centered modal overlay sized as a percentage of the screen.
+/// Used by the dialogs that are scrollable viewports (file picker, replace
+/// review) where more room is simply better.
 fn modal_area(area: Rect, width_pct: u16, height_pct: u16) -> Rect {
     let vertical = Layout::vertical([
         Constraint::Percentage((100 - height_pct) / 2),
@@ -22,11 +25,39 @@ fn modal_area(area: Rect, width_pct: u16, height_pct: u16) -> Rect {
     .split(vertical[1])[1]
 }
 
+/// Center a `w`×`h` rect within `area`, shrinking to fit if needed.
+fn centered(area: Rect, w: u16, h: u16) -> Rect {
+    let w = w.min(area.width);
+    let h = h.min(area.height);
+    Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    }
+}
+
+/// Size a modal to its content: width fits the widest line (plus borders),
+/// height fits the wrapped row count. Width is clamped between `min_width`
+/// and the screen minus a small margin; when clamping forces wrapping, the
+/// height estimate grows to match. Fixed-content dialogs use this so a
+/// two-line confirm isn't a quarter of a 4K screen and a tall help page
+/// isn't squeezed to 70% on a small one.
+fn modal_for_lines(area: Rect, lines: &[Line], min_width: u16) -> Rect {
+    let max_w = area.width.saturating_sub(4).max(1);
+    let content_w = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+    let w = (content_w + 4).clamp(min_width.min(max_w), max_w);
+    let inner_w = w.saturating_sub(2).max(1) as usize;
+    let rows: usize = lines
+        .iter()
+        .map(|l| l.width().div_ceil(inner_w).max(1))
+        .sum();
+    let h = (rows.max(1) as u16).saturating_add(2);
+    centered(area, w, h)
+}
+
 /// Render the help overlay.
 pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
-    let modal = modal_area(area, 60, 70);
-    f.render_widget(Clear, modal);
-
     // Section headers and key/description pairs. Each pair is rendered with
     // the key chord in yellow/bold and the description in default white —
     // makes the table easier to scan than the previous monochrome block.
@@ -55,6 +86,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("X", "Delete remote gist (keeps local file)"),
                 ("_", "Move local file to system trash (with confirm)"),
                 ("D", "Diff local vs remote"),
+                ("f", "Check remote for changes (updates status icons)"),
                 ("H", "Hydrate — match existing gists to files"),
             ],
         ),
@@ -144,6 +176,10 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
         "Set WM_MOUSE=1 to enable click-to-select + wheel-scroll routing.",
         dim,
     ));
+    lines.push(Line::styled(
+        "Icons: slim unicode by default; WM_EMOJI=1 for emoji, WM_NO_EMOJI=1 for ASCII.",
+        dim,
+    ));
     lines.push(Line::raw(""));
     lines.push(Line::styled(
         "Press any key to close.",
@@ -151,6 +187,9 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::ITALIC),
     ));
+
+    let modal = modal_for_lines(area, &lines, 60);
+    f.render_widget(Clear, modal);
 
     let g = crate::glyphs::glyphs();
     let block = Block::default()
@@ -215,17 +254,15 @@ pub fn render_file_picker(f: &mut Frame, area: Rect, app: &App, selected: usize)
     ])
     .split(inner);
 
-    // Query line
-    let query = Line::from(vec![
-        Span::styled(
-            "> ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(app.picker_editor.content.clone()),
-    ]);
-    f.render_widget(Paragraph::new(query), chunks[0]);
+    // Query line (with a visible cursor)
+    let mut query_spans = vec![Span::styled(
+        "> ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
+    query_spans.extend(app.picker_editor.spans(Style::default()));
+    f.render_widget(Paragraph::new(Line::from(query_spans)), chunks[0]);
 
     // Visible window: clamp `selected` into a scrolling viewport that keeps
     // the cursor in view without bouncing.
@@ -295,9 +332,13 @@ pub fn render_input_dialog(
     prompt: &str,
     editor: &LineEditor,
 ) {
-    let modal = modal_area(area, 60, 15);
-    f.render_widget(Clear, modal);
-
+    let mut input_spans = vec![Span::styled(
+        "> ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
+    input_spans.extend(editor.spans(Style::default().fg(Color::Yellow)));
     let lines = vec![
         Line::styled(
             prompt.to_string(),
@@ -306,16 +347,14 @@ pub fn render_input_dialog(
                 .add_modifier(Modifier::BOLD),
         ),
         Line::raw(""),
-        Line::from(vec![
-            Span::styled(
-                "> ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(editor.content.clone(), Style::default().fg(Color::Yellow)),
-        ]),
+        Line::from(input_spans),
     ];
+
+    // min_width 60 keeps the box from resizing on every keystroke; it only
+    // grows once the prompt or the typed text actually needs more room.
+    let modal = modal_for_lines(area, &lines, 60);
+    f.render_widget(Clear, modal);
+
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title.to_string())
@@ -333,7 +372,8 @@ pub fn render_input_dialog(
 
 /// Render hydration progress with a gauge bar.
 pub fn render_hydration_progress(f: &mut Frame, area: Rect, progress: &HydrationProgress) {
-    let modal = modal_area(area, 60, 25);
+    // 3 text rows + spacer + gauge + 2 border rows.
+    let modal = centered(area, 64.min(area.width.saturating_sub(4)), 7);
     f.render_widget(Clear, modal);
 
     let g = crate::glyphs::glyphs();
@@ -407,9 +447,6 @@ pub fn render_hydration_progress(f: &mut Frame, area: Rect, progress: &Hydration
 
 /// Render a confirmation dialog.
 pub fn render_confirm(f: &mut Frame, area: Rect, message: &str) {
-    let modal = modal_area(area, 50, 15);
-    f.render_widget(Clear, modal);
-
     let bold = Modifier::BOLD;
     let dim = Style::default().fg(Color::DarkGray);
     let lines = vec![
@@ -428,6 +465,9 @@ pub fn render_confirm(f: &mut Frame, area: Rect, message: &str) {
         ]),
     ];
 
+    let modal = modal_for_lines(area, &lines, 44);
+    f.render_widget(Clear, modal);
+
     let g = crate::glyphs::glyphs();
     let block = Block::default()
         .borders(Borders::ALL)
@@ -442,7 +482,8 @@ pub fn render_confirm(f: &mut Frame, area: Rect, message: &str) {
 
 /// Render a status message overlay.
 pub fn render_message(f: &mut Frame, area: Rect, message: &str) {
-    let modal = modal_area(area, 50, 10);
+    let lines: Vec<Line> = message.lines().map(Line::raw).collect();
+    let modal = modal_for_lines(area, &lines, 40);
     f.render_widget(Clear, modal);
 
     let g = crate::glyphs::glyphs();
@@ -463,20 +504,6 @@ pub fn render_message(f: &mut Frame, area: Rect, message: &str) {
 
 /// Render root switcher dialog.
 pub fn render_root_switcher(f: &mut Frame, area: Rect, app: &App) {
-    let modal = modal_area(area, 60, 50);
-    f.render_widget(Clear, modal);
-
-    let g = crate::glyphs::glyphs();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!("{} Root Directories", g.root))
-        .border_style(Style::default().fg(Color::Cyan))
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-
     let selected = if let crate::app::Mode::RootSwitcher { selected } = &app.mode {
         *selected
     } else {
@@ -514,6 +541,19 @@ pub fn render_root_switcher(f: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(Color::DarkGray),
     ));
 
+    let modal = modal_for_lines(area, &lines, 50);
+    f.render_widget(Clear, modal);
+
+    let g = crate::glyphs::glyphs();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!("{} Root Directories", g.root))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     let para = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
@@ -529,27 +569,7 @@ pub fn render_resolve_ambiguous(
     item: usize,
     selected: usize,
 ) {
-    let modal = modal_area(area, 70, 60);
-    f.render_widget(Clear, modal);
-
     let total = app.pending_ambiguous.len();
-    let g = crate::glyphs::glyphs();
-    let title = format!(
-        "{} Resolve ambiguous match ({} of {})",
-        g.question,
-        item + 1,
-        total
-    );
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(Color::Yellow))
-        .title_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
-
     let mut lines: Vec<Line> = Vec::new();
     if let Some(am) = app.pending_ambiguous.get(item) {
         lines.push(Line::styled(
@@ -588,6 +608,25 @@ pub fn render_resolve_ambiguous(
         Style::default().fg(Color::DarkGray),
     ));
 
+    let modal = modal_for_lines(area, &lines, 60);
+    f.render_widget(Clear, modal);
+
+    let g = crate::glyphs::glyphs();
+    let title = format!(
+        "{} Resolve ambiguous match ({} of {})",
+        g.question,
+        item + 1,
+        total
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
     let para = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
@@ -766,22 +805,41 @@ pub fn render_replace_review(f: &mut Frame, area: Rect, app: &App, selected: usi
 }
 
 /// Truncate `before`/`after` context strings around a match so each fits in
-/// roughly `pad` chars. Front-ellipsizes the "before" side and back-ellipsizes
-/// the "after" side so the matched substring stays visible.
+/// roughly `pad` display columns. Front-ellipsizes the "before" side and
+/// back-ellipsizes the "after" side so the matched substring stays visible.
+/// Budgeting by width (not chars) keeps rows with CJK context aligned.
 fn trim_context(before: &str, after: &str, pad: usize) -> (String, String) {
-    let b_chars: Vec<char> = before.chars().collect();
-    let a_chars: Vec<char> = after.chars().collect();
-    let b_out = if b_chars.len() > pad {
-        let tail: String = b_chars[b_chars.len() - pad..].iter().collect();
-        format!("…{tail}")
+    fn take_cols(chars: impl Iterator<Item = char>, budget: usize) -> (Vec<char>, bool) {
+        let mut used = 0;
+        let mut out = Vec::new();
+        let mut truncated = false;
+        for ch in chars {
+            let w = ch.width().unwrap_or(0);
+            if used + w > budget {
+                truncated = true;
+                break;
+            }
+            used += w;
+            out.push(ch);
+        }
+        (out, truncated)
+    }
+
+    let (mut b_rev, b_trunc) = take_cols(before.chars().rev(), pad);
+    b_rev.reverse();
+    let b_kept: String = b_rev.into_iter().collect();
+    let b_out = if b_trunc {
+        format!("…{b_kept}")
     } else {
-        before.to_string()
+        b_kept
     };
-    let a_out = if a_chars.len() > pad {
-        let head: String = a_chars[..pad].iter().collect();
-        format!("{head}…")
+
+    let (a_fwd, a_trunc) = take_cols(after.chars(), pad);
+    let a_kept: String = a_fwd.into_iter().collect();
+    let a_out = if a_trunc {
+        format!("{a_kept}…")
     } else {
-        after.to_string()
+        a_kept
     };
     (b_out, a_out)
 }
@@ -789,20 +847,6 @@ fn trim_context(before: &str, after: &str, pad: usize) -> (String, String) {
 /// Render the bulk-operations picker. Shows the four ops, each with its
 /// precomputed file count colored by emptiness (dim if 0, yellow/bold if >0).
 pub fn render_bulk_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
-    let modal = modal_area(area, 60, 40);
-    f.render_widget(Clear, modal);
-
-    let g = crate::glyphs::glyphs();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!("{} Bulk operations", g.file_pane))
-        .border_style(Style::default().fg(Color::Yellow))
-        .title_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
-
     let opts = app.bulk_options();
     let mut lines: Vec<Line> = Vec::new();
     for (i, opt) in opts.iter().enumerate() {
@@ -835,6 +879,19 @@ pub fn render_bulk_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
         Style::default().fg(Color::DarkGray),
     ));
 
+    let modal = modal_for_lines(area, &lines, 50);
+    f.render_widget(Clear, modal);
+
+    let g = crate::glyphs::glyphs();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!("{} Bulk operations", g.file_pane))
+        .border_style(Style::default().fg(Color::Yellow))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
     let para = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
@@ -844,20 +901,6 @@ pub fn render_bulk_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
 /// Render the sort-mode picker. Lists the five sort modes with the active
 /// one marked, and the cursor on `selected`.
 pub fn render_sort_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
-    let modal = modal_area(area, 50, 30);
-    f.render_widget(Clear, modal);
-
-    let g = crate::glyphs::glyphs();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!("{} Sort by", g.file_pane))
-        .border_style(Style::default().fg(Color::Cyan))
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-
     let active = app.config.sort.mode;
     let mut lines: Vec<Line> = Vec::new();
     for (i, mode) in crate::config::SortMode::all().iter().enumerate() {
@@ -881,6 +924,19 @@ pub fn render_sort_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
         Style::default().fg(Color::DarkGray),
     ));
 
+    let modal = modal_for_lines(area, &lines, 44);
+    f.render_widget(Clear, modal);
+
+    let g = crate::glyphs::glyphs();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!("{} Sort by", g.file_pane))
+        .border_style(Style::default().fg(Color::Cyan))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     let para = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
@@ -889,9 +945,6 @@ pub fn render_sort_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
 
 /// Render setup/add root dialog.
 pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
-    let modal = modal_area(area, 60, 20);
-    f.render_widget(Clear, modal);
-
     let g = crate::glyphs::glyphs();
     let is_setup = matches!(app.mode, crate::app::Mode::SetupRoot);
     let title: String = if is_setup {
@@ -910,6 +963,13 @@ pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
         "(Enter to confirm · Esc to cancel)"
     };
 
+    let mut input_spans = vec![Span::styled(
+        "> ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
+    input_spans.extend(app.input_editor.spans(Style::default().fg(Color::Yellow)));
     let lines = vec![
         Line::styled(
             prompt.to_string(),
@@ -918,24 +978,17 @@ pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Line::raw(""),
-        Line::from(vec![
-            Span::styled(
-                "> ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                app.input_editor.content.clone(),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
+        Line::from(input_spans),
         Line::raw(""),
         Line::styled(
             hint.trim().to_string(),
             Style::default().fg(Color::DarkGray),
         ),
     ];
+
+    let modal = modal_for_lines(area, &lines, 60);
+    f.render_widget(Clear, modal);
+
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)

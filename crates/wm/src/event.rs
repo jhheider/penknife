@@ -27,7 +27,29 @@ pub enum AsyncEvent {
     PullDone {
         root: PathBuf,
         rel_path: String,
+        /// SHA-256 of the local file when the pull was initiated. If the
+        /// on-disk content no longer matches by the time this event lands
+        /// (user edited mid-pull), the write is refused.
+        expected_local_sha256: String,
         result: std::result::Result<(String, crate::store::FileEntry), String>,
+    },
+    /// Push refused because the remote changed since the last sync.
+    /// Carries the freshly observed remote state so the store can record
+    /// the divergence and the UI can offer a force-push.
+    PushBlocked {
+        root: PathBuf,
+        rel_path: String,
+        remote_sha256: String,
+        remote_updated_at: chrono::DateTime<chrono::Utc>,
+    },
+    /// Progress for a bulk remote check (`f`).
+    RemoteCheckProgress { done: usize, total: usize },
+    /// Bulk remote check finished. `started` timestamps the check so stale
+    /// results don't clobber entries that synced while it ran.
+    RemoteCheckDone {
+        root: PathBuf,
+        started: chrono::DateTime<chrono::Utc>,
+        result: std::result::Result<crate::remote::RemoteCheckOutcome, String>,
     },
     /// Hydration progress update
     HydrationUpdate(HydrationProgress),
@@ -36,10 +58,16 @@ pub enum AsyncEvent {
     /// clobbering concurrent writes, plus any ambiguous matches that need
     /// user resolution.
     HydrationDone(std::result::Result<HydrationDoneData, String>),
-    /// Remote status check result
+    /// Remote status check result (from the diff view's fetch). Carries the
+    /// observed remote state so it can be written back to the store — a
+    /// diff is also a remote check.
     StatusCheck {
+        root: PathBuf,
         rel_path: String,
-        result: std::result::Result<(crate::sync::SyncStatus, String), String>,
+        /// When the fetch began; write-back is skipped if the entry synced
+        /// after this (the sync result is the newer truth).
+        started: chrono::DateTime<chrono::Utc>,
+        result: std::result::Result<crate::sync::FullStatus, String>,
     },
     /// Google Doc fetch result
     GdocFetched(std::result::Result<String, String>),

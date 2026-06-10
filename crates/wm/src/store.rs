@@ -14,6 +14,12 @@ pub struct FileEntry {
     pub local_sha256: String,
     pub remote_sha256: String,
     pub last_synced: DateTime<Utc>,
+    /// The gist's `updated_at` as of the last time we observed its remote
+    /// content. Lets `check_remote` skip fetching gists that haven't changed.
+    /// `None` (e.g. entries from older store versions) forces a fetch on the
+    /// next check.
+    #[serde(default)]
+    pub remote_updated_at: Option<DateTime<Utc>>,
 }
 
 const CURRENT_VERSION: u32 = 2;
@@ -170,6 +176,7 @@ mod tests {
             local_sha256: "abc".into(),
             remote_sha256: "abc".into(),
             last_synced: Utc.timestamp_opt(0, 0).unwrap(),
+            remote_updated_at: None,
         }
     }
 
