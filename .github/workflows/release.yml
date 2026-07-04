@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        env:
+          # The embedded Google OAuth client for official builds. Absent
+          # secrets mean the gdoc backend needs user-supplied credentials,
+          # which is fine for pre-release tags.
+          PENKNIFE_GDOC_DEFAULT_CLIENT_ID: ${{ secrets.GDOC_CLIENT_ID }}
+          PENKNIFE_GDOC_DEFAULT_CLIENT_SECRET: ${{ secrets.GDOC_CLIENT_SECRET }}
+        run: cargo build --release -p penknife
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/release/penknife dist/
+          tar -C dist -czf "penknife-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" penknife
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/penknife.exe dist/
+          Compress-Archive -Path dist/penknife.exe -DestinationPath "penknife-${{ github.ref_name }}-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: penknife-${{ matrix.target }}
+          path: penknife-${{ github.ref_name }}-${{ matrix.target }}.*
+          retention-days: 3
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "penknife ${{ github.ref_name }}" \
+            --generate-notes \
+            artifacts/*
