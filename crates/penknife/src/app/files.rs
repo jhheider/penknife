@@ -120,11 +120,14 @@ impl App {
             return;
         }
 
-        // Update store: move the entry under the new rel_path.
+        // Update store: move all of the file's copies under the new rel_path.
         let entry = self.store.get(&root, &old_rel).cloned();
-        if let Some(entry) = &entry {
-            self.store.remove(&root, &old_rel);
-            self.store.insert(&root, new_rel.clone(), entry.clone());
+        if self
+            .store
+            .files_for_root(&root)
+            .is_some_and(|m| m.contains_key(&old_rel))
+        {
+            self.store.move_entry(&root, &old_rel, new_rel.clone());
             if let Err(e) = self.store.save() {
                 self.status_message = format!("Renamed locally; store save failed: {e}");
                 return;
@@ -158,11 +161,11 @@ impl App {
                 let tx = self.async_tx.clone();
                 let new_rel_clone = new_rel.clone();
                 self.status_message = "Renamed locally; updating remote gist...".to_string();
-                let gist_id = entry.gist_id.clone();
+                let remote_id = entry.remote_id.clone();
                 self.spawn_tracked(async move {
                     let client = gist_rs::GistClient::new(token);
                     let result = client
-                        .rename_file(&gist_id, &old_base, &new_base)
+                        .rename_file(&remote_id, &old_base, &new_base)
                         .await
                         .map(|_| ())
                         .map_err(|e| e.to_string());

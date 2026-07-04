@@ -80,7 +80,7 @@ pub async fn full_status(
     entry: &FileEntry,
     filename: &str,
 ) -> Result<FullStatus> {
-    let gist = client.get(&entry.gist_id).await?;
+    let gist = client.get(&entry.remote_id).await?;
     let remote_content = client
         .file_content(&gist, filename)
         .await?
@@ -137,7 +137,7 @@ pub async fn push(
 
     let gist = if let Some(entry) = existing {
         if !force {
-            let current = client.get(&entry.gist_id).await?;
+            let current = client.get(&entry.remote_id).await?;
             let remote_content = client
                 .file_content(&current, filename)
                 .await?
@@ -150,13 +150,14 @@ pub async fn push(
                 });
             }
         }
-        client.update(&entry.gist_id, filename, content).await?
+        client.update(&entry.remote_id, filename, content).await?
     } else {
         client.create(filename, content, filename).await?
     };
 
     Ok(PushOutcome::Pushed(FileEntry {
-        gist_id: gist.id,
+        backend: crate::store::GIST_BACKEND.into(),
+        remote_id: gist.id,
         url: gist.html_url,
         local_sha256: hash.clone(),
         remote_sha256: hash,
@@ -171,7 +172,7 @@ pub async fn pull(
     entry: &FileEntry,
     filename: &str,
 ) -> Result<(String, FileEntry)> {
-    let gist = client.get(&entry.gist_id).await?;
+    let gist = client.get(&entry.remote_id).await?;
     let content = client
         .file_content(&gist, filename)
         .await?
@@ -180,7 +181,8 @@ pub async fn pull(
     let now = Utc::now();
 
     let updated = FileEntry {
-        gist_id: entry.gist_id.clone(),
+        backend: crate::store::GIST_BACKEND.into(),
+        remote_id: entry.remote_id.clone(),
         url: entry.url.clone(),
         local_sha256: hash.clone(),
         remote_sha256: hash,
@@ -198,7 +200,8 @@ mod tests {
 
     fn entry(local: &str, remote: &str) -> FileEntry {
         FileEntry {
-            gist_id: "g".into(),
+            backend: crate::store::GIST_BACKEND.into(),
+            remote_id: "g".into(),
             url: "u".into(),
             local_sha256: local.into(),
             remote_sha256: remote.into(),
@@ -287,7 +290,7 @@ mod tests {
         // No PATCH mock: a push attempt would 404 and fail the test.
         let client = gist_rs::GistClient::with_base_url("t".into(), server.uri());
         let mut stored = entry(&sha256_hex("v1"), &sha256_hex("v1"));
-        stored.gist_id = "g1".into();
+        stored.remote_id = "g1".into();
 
         let outcome = push(&client, Some(&stored), "a.md", "local v3", false)
             .await
@@ -317,7 +320,7 @@ mod tests {
             .await;
         let client = gist_rs::GistClient::with_base_url("t".into(), server.uri());
         let mut stored = entry(&sha256_hex("v1"), &sha256_hex("v1"));
-        stored.gist_id = "g1".into();
+        stored.remote_id = "g1".into();
 
         let outcome = push(&client, Some(&stored), "a.md", "local v3", false)
             .await
@@ -345,7 +348,7 @@ mod tests {
             .await;
         let client = gist_rs::GistClient::with_base_url("t".into(), server.uri());
         let mut stored = entry(&sha256_hex("v1"), "remote-hash-we-know-diverged");
-        stored.gist_id = "g1".into();
+        stored.remote_id = "g1".into();
 
         let outcome = push(&client, Some(&stored), "a.md", "local v3", true)
             .await
@@ -385,7 +388,7 @@ mod tests {
             .await;
         let client = gist_rs::GistClient::with_base_url("t".into(), server.uri());
         let mut stored = entry("x", "y");
-        stored.gist_id = "g1".into();
+        stored.remote_id = "g1".into();
 
         let (content, updated) = pull(&client, &stored, "a.md").await.unwrap();
         assert_eq!(content, "the full content");

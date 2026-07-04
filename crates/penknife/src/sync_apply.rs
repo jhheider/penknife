@@ -115,10 +115,11 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn entry(gist_id: &str, synced_at: i64) -> FileEntry {
+    fn entry(remote_id: &str, synced_at: i64) -> FileEntry {
         FileEntry {
-            gist_id: gist_id.into(),
-            url: format!("https://gist.github.com/u/{gist_id}"),
+            backend: crate::store::GIST_BACKEND.into(),
+            remote_id: remote_id.into(),
+            url: format!("https://gist.github.com/u/{remote_id}"),
             local_sha256: "l".into(),
             remote_sha256: "r".into(),
             last_synced: Utc.timestamp_opt(synced_at, 0).unwrap(),
@@ -152,7 +153,7 @@ mod tests {
             std::fs::read_to_string(root.join("a.md")).unwrap(),
             "remote content"
         );
-        assert_eq!(store.get(root, "a.md").unwrap().gist_id, "g1");
+        assert_eq!(store.get(root, "a.md").unwrap().remote_id, "g1");
     }
 
     #[test]

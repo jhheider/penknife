@@ -49,7 +49,7 @@ pub async fn check_remote(
 
     for (i, (rel, entry)) in entries.iter().enumerate() {
         progress_cb(i + 1, total);
-        let Some(listed) = by_id.get(entry.gist_id.as_str()) else {
+        let Some(listed) = by_id.get(entry.remote_id.as_str()) else {
             missing.push(rel.clone());
             continue;
         };
@@ -59,7 +59,7 @@ pub async fn check_remote(
 
         // updated_at moved (or was never recorded) - fetch the real content.
         // The listing omits content, so this needs a per-gist GET.
-        let full = client.get(&entry.gist_id).await?;
+        let full = client.get(&entry.remote_id).await?;
         let filename = rel.rsplit('/').next().unwrap_or(rel);
         let remote_content = client
             .file_content(&full, filename)
@@ -94,7 +94,7 @@ pub fn should_apply_update(
     check_started: DateTime<Utc>,
 ) -> bool {
     match current {
-        Some(cur) => cur.gist_id == refreshed.gist_id && cur.last_synced <= check_started,
+        Some(cur) => cur.remote_id == refreshed.remote_id && cur.last_synced <= check_started,
         None => false,
     }
 }
@@ -104,9 +104,10 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn entry(gist_id: &str, synced_at: i64) -> FileEntry {
+    fn entry(remote_id: &str, synced_at: i64) -> FileEntry {
         FileEntry {
-            gist_id: gist_id.into(),
+            backend: crate::store::GIST_BACKEND.into(),
+            remote_id: remote_id.into(),
             url: "u".into(),
             local_sha256: "l".into(),
             remote_sha256: "r".into(),
@@ -124,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn update_skipped_when_gist_id_changed() {
+    fn update_skipped_when_remote_id_changed() {
         let started = Utc.timestamp_opt(100, 0).unwrap();
         let cur = entry("g2", 50);
         let refreshed = entry("g1", 50);

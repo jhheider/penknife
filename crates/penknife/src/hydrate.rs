@@ -24,7 +24,7 @@ pub struct AmbiguousMatch {
 
 #[derive(Debug, Clone)]
 pub struct GistCandidate {
-    pub gist_id: String,
+    pub remote_id: String,
     pub url: String,
     pub description: Option<String>,
     pub size: u64,
@@ -259,7 +259,8 @@ pub async fn hydrate(
                 root,
                 file.rel_path.clone(),
                 FileEntry {
-                    gist_id: gist.id.clone(),
+                    backend: crate::store::GIST_BACKEND.into(),
+                    remote_id: gist.id.clone(),
                     url: gist.html_url.clone(),
                     local_sha256: local_hash.clone(),
                     remote_sha256: local_hash,
@@ -276,7 +277,7 @@ pub async fn hydrate(
                 candidates: size_matches
                     .iter()
                     .map(|g| GistCandidate {
-                        gist_id: g.id.clone(),
+                        remote_id: g.id.clone(),
                         url: g.html_url.clone(),
                         description: g.description.clone(),
                         size: g.files.get(&filename).map(|f| f.size).unwrap_or(0),
@@ -302,14 +303,15 @@ pub async fn hydrate(
 /// fails (better to leave the file unmapped than to record a guess).
 async fn verified_entry(
     client: &GistClient,
-    gist_id: &str,
+    remote_id: &str,
     filename: &str,
     local_content: &str,
 ) -> Option<FileEntry> {
-    let full = client.get(gist_id).await.ok()?;
+    let full = client.get(remote_id).await.ok()?;
     let remote_content = client.file_content(&full, filename).await.ok()??;
     Some(FileEntry {
-        gist_id: full.id.clone(),
+        backend: crate::store::GIST_BACKEND.into(),
+        remote_id: full.id.clone(),
         url: full.html_url.clone(),
         local_sha256: sha256_hex(local_content),
         remote_sha256: sha256_hex(&remote_content),

@@ -178,7 +178,7 @@ pub enum ConfirmAction {
     DeleteRemote {
         rel_path: String,
         root: PathBuf,
-        gist_id: String,
+        remote_id: String,
     },
     TrashLocal {
         rel_path: String,
@@ -189,7 +189,7 @@ pub enum ConfirmAction {
     DeleteBoth {
         rel_path: String,
         root: PathBuf,
-        gist_id: String,
+        remote_id: String,
     },
     /// A bulk operation, with the file list captured at menu-display time.
     Bulk(BulkAction),

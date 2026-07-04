@@ -8,6 +8,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+penknife-backend = { path = "../penknife-backend" }
+async-trait = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }

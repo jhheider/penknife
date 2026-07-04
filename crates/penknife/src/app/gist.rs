@@ -380,7 +380,8 @@ impl App {
                 let sha = sync::sha256_hex(&content);
                 Ok(crate::event::GistImportData {
                     entry: FileEntry {
-                        gist_id: gist.id.clone(),
+                        backend: crate::store::GIST_BACKEND.into(),
+                        remote_id: gist.id.clone(),
                         url: gist.html_url.clone(),
                         local_sha256: sha.clone(),
                         remote_sha256: sha,
@@ -603,7 +604,7 @@ impl App {
             action: ConfirmAction::DeleteBoth {
                 rel_path: rel,
                 root,
-                gist_id: entry.gist_id,
+                remote_id: entry.remote_id,
             },
         };
     }
@@ -626,12 +627,12 @@ impl App {
             action: ConfirmAction::DeleteRemote {
                 rel_path: rel,
                 root,
-                gist_id: entry.gist_id,
+                remote_id: entry.remote_id,
             },
         };
     }
 
-    pub(crate) fn do_delete_remote(&mut self, rel_path: String, root: PathBuf, gist_id: String) {
+    pub(crate) fn do_delete_remote(&mut self, rel_path: String, root: PathBuf, remote_id: String) {
         let Some(token) = self.token.clone() else {
             self.status_message = "No GitHub token available.".into();
             return;
@@ -640,7 +641,7 @@ impl App {
         self.status_message = format!("Deleting gist for {rel_path}...");
         self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
-            let result = client.delete(&gist_id).await.map_err(|e| e.to_string());
+            let result = client.delete(&remote_id).await.map_err(|e| e.to_string());
             let _ = tx.send(AsyncEvent::DeleteDone {
                 root,
                 rel_path,
@@ -710,7 +711,7 @@ impl App {
             .to_string_lossy()
             .to_string();
         let tx = self.async_tx.clone();
-        let gist_id = entry.gist_id.clone();
+        let remote_id = entry.remote_id.clone();
         let local_for_task = local_content.clone();
         let started = chrono::Utc::now();
 
@@ -731,7 +732,7 @@ impl App {
         self.diff_scroll = 0;
         self.mode = Mode::Diff {
             local: local_content,
-            remote: format!("(fetching remote content for {gist_id}...)"),
+            remote: format!("(fetching remote content for {remote_id}...)"),
         };
     }
 
@@ -750,10 +751,10 @@ impl App {
         let Some(root) = self.active_root_path() else {
             return;
         };
-        let entries = match self.store.files_for_root(&root) {
-            Some(map) if !map.is_empty() => map.clone(),
-            _ => return,
-        };
+        let entries = self.store.gist_entries_for_root(&root);
+        if entries.is_empty() {
+            return;
+        }
         let started = chrono::Utc::now();
         let tx = self.async_tx.clone();
 
@@ -790,10 +791,8 @@ impl App {
         let new_cursor = chrono::Utc::now();
         // Snapshot only this root's mappings; we'll merge results back when done.
         let mut store = Store::default();
-        if let Some(map) = self.store.files_for_root(&root) {
-            for (rel, entry) in map {
-                store.insert(&root, rel.clone(), entry.clone());
-            }
+        for (rel, entry) in self.store.gist_entries_for_root(&root) {
+            store.insert(&root, rel, entry);
         }
 
         self.spawn_tracked(async move {
@@ -836,7 +835,8 @@ impl App {
             return;
         };
         let entry = FileEntry {
-            gist_id: cand.gist_id.clone(),
+            backend: crate::store::GIST_BACKEND.into(),
+            remote_id: cand.remote_id.clone(),
             url: cand.url.clone(),
             local_sha256: am.local_hash.clone(),
             remote_sha256: am.local_hash.clone(),
@@ -896,7 +896,7 @@ impl App {
             self.status_message = "No active root.".into();
             return;
         };
-        let Some(gist_id) = parse_gist_id(raw) else {
+        let Some(remote_id) = parse_gist_id(raw) else {
             self.status_message = format!("Couldn't read a gist ID from '{raw}'.");
             return;
         };
@@ -904,10 +904,10 @@ impl App {
         let local_content = std::fs::read_to_string(self.abs_path(&rel_path)).unwrap_or_default();
         let filename = rel_path.rsplit('/').next().unwrap_or(&rel_path).to_string();
         let tx = self.async_tx.clone();
-        self.status_message = format!("Linking {rel_path} → gist {gist_id}...");
+        self.status_message = format!("Linking {rel_path} → gist {remote_id}...");
         self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
-            let result = build_link_entry(&client, &gist_id, &filename, &local_content).await;
+            let result = build_link_entry(&client, &remote_id, &filename, &local_content).await;
             let _ = tx.send(AsyncEvent::LinkDone {
                 root,
                 rel_path,
@@ -923,12 +923,12 @@ impl App {
 /// honest (Synced only when they truly match).
 async fn build_link_entry(
     client: &gist_rs::GistClient,
-    gist_id: &str,
+    remote_id: &str,
     local_filename: &str,
     local_content: &str,
 ) -> crate::error::Result<FileEntry> {
     use crate::error::PkError;
-    let gist = client.get(gist_id).await?;
+    let gist = client.get(remote_id).await?;
     // Prefer the gist file whose name matches the local basename; fall back to
     // the sole file in a single-file gist. A multi-file gist with no name
     // match is genuinely ambiguous - refuse rather than guess.
@@ -937,11 +937,11 @@ async fn build_link_entry(
     } else if gist.files.len() == 1 {
         gist.files.keys().next().cloned().expect("len==1 has a key")
     } else if gist.files.is_empty() {
-        return Err(PkError::Other(format!("Gist {gist_id} has no files.")));
+        return Err(PkError::Other(format!("Gist {remote_id} has no files.")));
     } else {
         let names: Vec<&str> = gist.files.keys().map(|s| s.as_str()).collect();
         return Err(PkError::Other(format!(
-            "Gist {gist_id} has multiple files ({}); none named '{local_filename}'. \
+            "Gist {remote_id} has multiple files ({}); none named '{local_filename}'. \
              Rename the local file to match one, or link via a single-file gist.",
             names.join(", ")
         )));
@@ -951,7 +951,8 @@ async fn build_link_entry(
         .await?
         .unwrap_or_default();
     Ok(FileEntry {
-        gist_id: gist.id.clone(),
+        backend: crate::store::GIST_BACKEND.into(),
+        remote_id: gist.id.clone(),
         url: gist.html_url.clone(),
         local_sha256: sync::sha256_hex(local_content),
         remote_sha256: sync::sha256_hex(&remote_content),

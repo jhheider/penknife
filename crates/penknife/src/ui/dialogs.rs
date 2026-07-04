@@ -506,7 +506,7 @@ pub fn render_resolve_ambiguous(
             };
             let desc = c.description.as_deref().unwrap_or("(no description)");
             lines.push(Line::styled(
-                format!("{marker}{:.10}  {} bytes  {}", c.gist_id, c.size, desc),
+                format!("{marker}{:.10}  {} bytes  {}", c.remote_id, c.size, desc),
                 style,
             ));
             lines.push(Line::styled(

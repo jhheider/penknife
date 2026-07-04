@@ -1,0 +1,13 @@
+[package]
+name = "penknife-backend"
+description = "Backend contract for penknife: publish and sync documents to remote services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }

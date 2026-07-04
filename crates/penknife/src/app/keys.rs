@@ -256,22 +256,22 @@ impl App {
                 ConfirmAction::DeleteRemote {
                     rel_path,
                     root,
-                    gist_id,
-                } => self.do_delete_remote(rel_path, root, gist_id),
+                    remote_id,
+                } => self.do_delete_remote(rel_path, root, remote_id),
                 ConfirmAction::TrashLocal { rel_path, root } => {
                     self.do_trash_local(rel_path, root);
                 }
                 ConfirmAction::DeleteBoth {
                     rel_path,
                     root,
-                    gist_id,
+                    remote_id,
                 } => {
                     // Remote delete is async (DeleteDone prunes the store
                     // entry); the trash is immediate. If the remote delete
                     // later fails, its error lands in the status bar and the
                     // gist survives; the local file is already in the trash
                     // and recoverable either way.
-                    self.do_delete_remote(rel_path.clone(), root.clone(), gist_id);
+                    self.do_delete_remote(rel_path.clone(), root.clone(), remote_id);
                     self.do_trash_local(rel_path, root);
                 }
                 ConfirmAction::Bulk(action) => {
