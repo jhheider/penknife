@@ -112,6 +112,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
             "Files & roots",
             &[
                 ("/", "Fuzzy file picker (fzf-style)"),
+                ("f", "Find in files (content search, jump to match)"),
                 ("O", "Pick sort order for the tree"),
                 ("B", "Bulk ops menu (push/pull dirty, format JSON, prune)"),
                 ("s", "Find & replace (recursive within current scope)"),
@@ -561,6 +562,119 @@ pub fn render_resolve_ambiguous(
 /// one match (rel_path:line + the line text with the matched substring
 /// highlighted). Space toggles, a/z select all/none, Enter applies, Esc
 /// aborts.
+/// Render the find-in-files jump list: path:line rows with the match
+/// highlighted in context. Enter jumps to the file; no mutation involved.
+pub fn render_search_results(f: &mut Frame, area: Rect, app: &App, selected: usize) {
+    let modal = modal_area(area, 85, 80);
+    f.render_widget(Clear, modal);
+
+    let g = crate::glyphs::glyphs();
+    let total = app.search_matches.len();
+
+    let title_line = Line::from(vec![
+        Span::styled(format!("{} ", g.search), Style::default().fg(Color::Yellow)),
+        Span::styled(
+            "Find",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("(", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{}/{}", (selected + 1).min(total), total),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(")", Style::default().fg(Color::DarkGray)),
+    ]);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title_line)
+        .border_style(Style::default().fg(Color::Yellow));
+    let inner = block.inner(modal);
+    f.render_widget(block, modal);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1), // summary line
+        Constraint::Length(1), // spacer
+        Constraint::Min(1),    // results
+    ])
+    .split(inner);
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let summary = Line::from(vec![
+        Span::styled("'", dim),
+        Span::styled(
+            app.search_query.clone(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("' in ", dim),
+        Span::styled(app.replace_scope_label(), Style::default().fg(Color::Cyan)),
+    ]);
+    f.render_widget(Paragraph::new(summary), chunks[0]);
+
+    // Scrolling viewport for the list.
+    let view_h = chunks[2].height as usize;
+    let start = if view_h == 0 {
+        0
+    } else if selected >= view_h {
+        selected + 1 - view_h
+    } else {
+        0
+    };
+    let end = (start + view_h).min(total);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
+    for row_idx in start..end {
+        let m = &app.search_matches[row_idx];
+        let is_selected = row_idx == selected;
+        let row_bg = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        spans.push(Span::styled(
+            if is_selected { " ▶ " } else { "   " },
+            row_bg,
+        ));
+        spans.push(Span::styled(
+            format!("{}:{}", m.rel_path, m.line),
+            if is_selected {
+                row_bg
+            } else {
+                Style::default().fg(Color::Magenta)
+            },
+        ));
+        spans.push(Span::raw("  "));
+        let line = &m.line_text;
+        let end_byte = m.col_byte + app.search_query.len();
+        let before = line.get(..m.col_byte).unwrap_or("");
+        let hit = line.get(m.col_byte..end_byte).unwrap_or("");
+        let after = line.get(end_byte..).unwrap_or("");
+        let (before, after) = trim_context(before, after, 30);
+        spans.push(Span::styled(before, row_bg));
+        spans.push(Span::styled(
+            hit.to_string(),
+            if is_selected {
+                row_bg.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            },
+        ));
+        spans.push(Span::styled(after, row_bg));
+        lines.push(Line::from(spans));
+    }
+    if lines.is_empty() {
+        lines.push(Line::styled("  (no matches)", dim));
+    }
+    f.render_widget(Paragraph::new(lines), chunks[2]);
+}
+
 pub fn render_replace_review(f: &mut Frame, area: Rect, app: &App, selected: usize) {
     let modal = modal_area(area, 85, 80);
     f.render_widget(Clear, modal);

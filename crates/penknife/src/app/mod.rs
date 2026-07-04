@@ -62,6 +62,12 @@ pub enum Mode {
         item: usize,
         selected: usize,
     },
+    /// Find in files: prompt for the search string.
+    SearchQuery,
+    /// Find in files: scrollable jump list of content matches.
+    SearchResults {
+        selected: usize,
+    },
     /// Step 1 of replace: prompt for the search string.
     ReplaceQuery,
     /// Step 2 of replace: prompt for the replacement string.
@@ -206,6 +212,10 @@ pub struct App {
     /// If set, main.rs should suspend the TUI and run this shell command
     /// (via `sh -c`) with PWD set to the active root, then resume.
     pub pending_alias: Option<String>,
+    /// Find-in-files state: the query and its content matches, feeding the
+    /// SearchResults jump list.
+    pub search_query: String,
+    pub search_matches: Vec<crate::replace::ReplaceMatch>,
     /// Multi-file find-and-replace state - populated as the user moves
     /// through ReplaceQuery → ReplaceTarget → ReplaceReview.
     pub replace_query: String,
@@ -266,7 +276,7 @@ fn files_differ(current: &[ScannedFile], scanned: &[ScannedFile]) -> bool {
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
-    'M', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')', 'L',
+    'M', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')', 'L', 'f',
 ];
 
 impl App {
@@ -348,6 +358,8 @@ impl App {
             tasks: Vec::new(),
             pending_editor: None,
             pending_alias: None,
+            search_query: String::new(),
+            search_matches: Vec::new(),
             replace_query: String::new(),
             replace_target: String::new(),
             replace_matches: Vec::new(),

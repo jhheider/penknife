@@ -310,6 +310,43 @@ impl App {
         self.mode = Mode::ReplaceQuery;
     }
 
+    pub(crate) fn start_search(&mut self) {
+        if self.active_root_path().is_none() {
+            self.status_message = "No root directory configured.".into();
+            return;
+        }
+        self.search_query.clear();
+        self.search_matches.clear();
+        self.input_editor = LineEditor::new();
+        self.mode = Mode::SearchQuery;
+    }
+
+    /// Run the content scan for find-in-files. Same scope rules as replace:
+    /// the selected directory if one is highlighted, otherwise the root.
+    pub(crate) fn run_search_scan(&mut self) {
+        let Some(scope) = self.replace_scope() else {
+            self.status_message = "No scope available.".into();
+            self.mode = Mode::Normal;
+            return;
+        };
+        let Some(root) = self.active_root_path() else {
+            self.status_message = "No root.".into();
+            self.mode = Mode::Normal;
+            return;
+        };
+        self.search_matches = crate::replace::scan(&scope, &root, &self.search_query);
+        if self.search_matches.is_empty() {
+            self.status_message = format!(
+                "No matches for '{}' in {}",
+                self.search_query,
+                self.replace_scope_label()
+            );
+            self.mode = Mode::Normal;
+            return;
+        }
+        self.mode = Mode::SearchResults { selected: 0 };
+    }
+
     pub(crate) fn run_replace_scan(&mut self) {
         let Some(scope) = self.replace_scope() else {
             self.status_message = "No scope available.".into();

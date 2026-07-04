@@ -220,6 +220,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Mode::ResolveAmbiguous { item, selected } => {
             dialogs::render_resolve_ambiguous(f, f.area(), app, *item, *selected);
         }
+        Mode::SearchQuery => {
+            dialogs::render_input_dialog(
+                f,
+                f.area(),
+                &format!("Find in {}", app.replace_scope_label()),
+                "Search for (exact match):",
+                &app.input_editor,
+            );
+        }
+        Mode::SearchResults { selected } => {
+            dialogs::render_search_results(f, f.area(), app, *selected);
+        }
         Mode::ReplaceQuery => {
             dialogs::render_input_dialog(
                 f,

@@ -19,7 +19,8 @@ pub fn hints(mode: &Mode, focused_pane: PaneFocus) -> Vec<Hint> {
                 ("d", "pull"),
                 ("D", "diff"),
                 ("e", "edit"),
-                ("/", "find"),
+                ("/", "files"),
+                ("f", "find"),
                 ("B", "bulk"),
                 ("g", "git"),
                 ("?", "help"),
@@ -46,6 +47,13 @@ pub fn hints(mode: &Mode, focused_pane: PaneFocus) -> Vec<Hint> {
             vec![("Enter", "confirm"), ("Esc", "cancel")]
         }
         Mode::SetupRoot => vec![("Enter", "confirm"), ("Ctrl+Q", "quit")],
+        Mode::SearchQuery => vec![("Enter", "search"), ("Esc", "cancel")],
+        Mode::SearchResults { .. } => vec![
+            ("j/k", "select"),
+            ("Enter", "open"),
+            ("PgUp/PgDn", "page"),
+            ("Esc", "close"),
+        ],
         Mode::ReplaceQuery | Mode::ReplaceTarget => {
             vec![("Enter", "next"), ("Esc", "cancel")]
         }
@@ -138,6 +146,8 @@ mod tests {
                 item: 0,
                 selected: 0,
             },
+            Mode::SearchQuery,
+            Mode::SearchResults { selected: 0 },
             Mode::ReplaceQuery,
             Mode::ReplaceTarget,
             Mode::ReplaceReview { selected: 0 },

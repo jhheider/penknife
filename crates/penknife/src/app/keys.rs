@@ -21,6 +21,8 @@ impl App {
             Mode::ResolveAmbiguous { .. } => self.handle_resolve_ambiguous_key(key),
             Mode::RootSwitcher { .. } => self.handle_root_switcher_key(key),
             Mode::SetupRoot | Mode::AddRoot => self.handle_setup_or_add_root_key(key),
+            Mode::SearchQuery => self.handle_search_query_key(key),
+            Mode::SearchResults { .. } => self.handle_search_results_key(key),
             Mode::ReplaceQuery => self.handle_replace_query_key(key),
             Mode::ReplaceTarget => self.handle_replace_target_key(key),
             Mode::ReplaceReview { .. } => self.handle_replace_review_key(key),
@@ -101,6 +103,7 @@ impl App {
             KeyCode::Char(')') => self.confirm_git_push(),
             KeyCode::Char('=') => self.do_format_in_place(),
             KeyCode::Char('s') => self.start_replace(),
+            KeyCode::Char('f') => self.start_search(),
             KeyCode::Char('M') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.pending_ambiguous.is_empty() {
                     self.status_message = "No ambiguous matches to resolve.".into();
@@ -459,6 +462,70 @@ impl App {
             _ => {
                 self.input_editor.handle_key(key);
             }
+        }
+    }
+
+    fn handle_search_query_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                let q = self.input_editor.content.trim().to_string();
+                if q.is_empty() {
+                    self.status_message = "Search string cannot be empty.".into();
+                    self.mode = Mode::Normal;
+                    return;
+                }
+                self.search_query = q;
+                self.input_editor = LineEditor::new();
+                self.run_search_scan();
+            }
+            _ => {
+                self.input_editor.handle_key(key);
+            }
+        }
+    }
+
+    fn handle_search_results_key(&mut self, key: KeyEvent) {
+        let Mode::SearchResults { selected } = self.mode else {
+            return;
+        };
+        let max = self.search_matches.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                if let Some(m) = self.search_matches.get(selected) {
+                    let rel_path = m.rel_path.clone();
+                    self.mode = Mode::Normal;
+                    self.jump_to(&rel_path);
+                } else {
+                    self.mode = Mode::Normal;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.mode = Mode::SearchResults {
+                    selected: (selected + 1).min(max),
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::SearchResults {
+                    selected: selected.saturating_sub(1),
+                };
+            }
+            KeyCode::PageDown => {
+                self.mode = Mode::SearchResults {
+                    selected: (selected + 10).min(max),
+                };
+            }
+            KeyCode::PageUp => {
+                self.mode = Mode::SearchResults {
+                    selected: selected.saturating_sub(10),
+                };
+            }
+            _ => {}
         }
     }
 

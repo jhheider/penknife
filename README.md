@@ -17,6 +17,7 @@ Where it fits: your editor is where you write. A git remote or sync service is h
 - Hydration: existing gists are matched to local files by filename and content hash automatically at startup, with an interactive resolver (`M`) for ambiguous cases
 - Multi-root: switch between several configured directories from inside the app
 - Fuzzy file picker (`/`): fzf-style modal with smartcase matching and inline highlights, powered by [nucleo](https://crates.io/crates/nucleo-matcher)
+- Find in files (`f`): content search across the current scope with a jump list; Enter opens the matched file
 - Find and replace (`s`): recursive substring search within the current scope, per-match review checklist with line context, drift detection on apply
 - Markdown preview with syntax highlighting
 - Google Doc import: fetch a public Google Doc and save it as markdown under any tree
@@ -95,6 +96,7 @@ Tokens are **not** persisted by this tool; they're resolved fresh on each launch
 | `=` | Normal | Toggle JSON between compact and pretty form in place |
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
 | `_` | Normal | Move local file to the system trash (with confirmation) |
+| `f` | Normal | Find in files: content search with a jump list |
 | `M` | Normal | Resolve ambiguous hydration matches (see below) |
 | `L` | Normal | Link the selected file to an existing gist by URL or ID |
 | `I` | Normal | Import a Google Doc as markdown |
