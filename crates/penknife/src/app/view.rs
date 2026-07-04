@@ -24,7 +24,12 @@ struct StatusCounts {
 impl App {
     pub(crate) fn rebuild_tree(&mut self) {
         self.apply_sort();
-        let built = tree::build_tree(&self.files, &self.status_cache, &self.git_statuses);
+        let built = tree::build_tree(
+            &self.files,
+            &self.status_cache,
+            &self.git_statuses,
+            &self.publish_cache,
+        );
         self.tree_items = built.items;
         self.tree_identifiers = built.identifiers;
         self.tree_file_ids = built.file_ids;
@@ -95,19 +100,33 @@ impl App {
     /// the IO. Must be called *after* `self.files` is populated.
     pub(crate) fn refresh_status_cache(&mut self) {
         self.status_cache.clear();
+        self.publish_cache.clear();
         let Some(root) = self.current_root().cloned() else {
             return;
         };
         self.status_cache.reserve(self.files.len());
         for f in &self.files {
             let entry = self.store.get(&root, &f.rel_path);
+            let gdoc = self
+                .store
+                .get_backend(&root, &f.rel_path, crate::store::GDOC_BACKEND);
+            let content = if entry.is_some() || gdoc.is_some() {
+                std::fs::read_to_string(&f.abs_path).unwrap_or_default()
+            } else {
+                String::new()
+            };
             let status = if entry.is_some() {
-                let content = std::fs::read_to_string(&f.abs_path).unwrap_or_default();
                 sync::local_status(&content, entry)
             } else {
                 sync::SyncStatus::NotGisted
             };
             self.status_cache.insert(f.rel_path.clone(), status);
+            // Publish badge: stale when the file moved on since the last
+            // publish (the copy records the sha that was sent).
+            if let Some(gd) = gdoc {
+                let stale = sync::sha256_hex(&content) != gd.local_sha256;
+                self.publish_cache.insert(f.rel_path.clone(), stale);
+            }
         }
     }
 
@@ -118,13 +137,29 @@ impl App {
             return;
         };
         let entry = self.store.get(&root, rel_path);
+        let gdoc = self
+            .store
+            .get_backend(&root, rel_path, crate::store::GDOC_BACKEND);
+        let content = if entry.is_some() || gdoc.is_some() {
+            std::fs::read_to_string(self.abs_path(rel_path)).unwrap_or_default()
+        } else {
+            String::new()
+        };
         let status = if entry.is_some() {
-            let content = std::fs::read_to_string(self.abs_path(rel_path)).unwrap_or_default();
             sync::local_status(&content, entry)
         } else {
             sync::SyncStatus::NotGisted
         };
         self.status_cache.insert(rel_path.to_string(), status);
+        match gdoc {
+            Some(gd) => {
+                let stale = sync::sha256_hex(&content) != gd.local_sha256;
+                self.publish_cache.insert(rel_path.to_string(), stale);
+            }
+            None => {
+                self.publish_cache.remove(rel_path);
+            }
+        }
     }
 
     /// Cache lookup; defaults to NotGisted for paths not in the cache.

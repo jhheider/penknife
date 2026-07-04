@@ -137,6 +137,8 @@ Each file in the tree carries a sync-state icon followed by a git-state icon (th
 | `!` | ❗ | `[!]` | Conflict: both diverged |
 | `·` | ⚪ | `[ ]` | Not yet mapped to a gist |
 
+Files published to Google Docs carry a trailing diamond badge: green when the Doc matches the last-published content, yellow when the local file has moved on since (re-publish with `p` to refresh it).
+
 ### Polling
 
 The tree keeps itself current; there are no refresh keys.

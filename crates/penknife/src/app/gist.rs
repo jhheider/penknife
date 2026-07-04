@@ -382,6 +382,8 @@ impl App {
                             self.status_message = format!("Published; store save failed: {e}");
                             return;
                         }
+                        self.refresh_status_for(&rel_path);
+                        self.rebuild_tree();
                         self.status_message = if data.updated {
                             format!("Updated Google Doc for {rel_path}")
                         } else {
@@ -405,6 +407,8 @@ impl App {
                         self.status_message = format!("Unpublished; store save failed: {e}");
                         return;
                     }
+                    self.refresh_status_for(&rel_path);
+                    self.rebuild_tree();
                     self.status_message = format!("Unpublished {rel_path} (Doc deleted)");
                 }
                 Err(e) => {

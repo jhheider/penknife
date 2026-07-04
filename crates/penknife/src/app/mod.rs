@@ -337,6 +337,10 @@ pub struct App {
     pub pending_publish: Option<String>,
     /// Abort handle for the in-flight device-flow poll, so Esc can cancel.
     pub gdoc_auth_abort: Option<tokio::task::AbortHandle>,
+    /// Per-file publish badge state: present when the file has a Google Doc
+    /// copy; the bool is "stale" (local content changed since publish).
+    /// Refreshed alongside `status_cache`.
+    pub publish_cache: std::collections::HashMap<String, bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -477,6 +481,7 @@ impl App {
             gdoc_client,
             pending_publish: None,
             gdoc_auth_abort: None,
+            publish_cache: std::collections::HashMap::new(),
         };
         // Populate the per-file sync-status cache and git status before the
         // first tree build so leaf glyphs reflect the loaded store right away.
