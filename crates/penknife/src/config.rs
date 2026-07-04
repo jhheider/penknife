@@ -107,6 +107,49 @@ impl Default for PollConfig {
     }
 }
 
+/// Google Docs backend settings. Credentials resolve in order: this config,
+/// then `PENKNIFE_GDOC_CLIENT_ID`/`PENKNIFE_GDOC_CLIENT_SECRET` env vars,
+/// then the compile-time default embedded at release build (rclone-style).
+/// Empty everywhere means the gdoc backend is unavailable.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct GdocConfig {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
+
+/// Compile-time default OAuth client, injected at release build via
+/// `PENKNIFE_GDOC_DEFAULT_CLIENT_ID` / `..._SECRET`. Empty in dev builds.
+#[allow(dead_code)] // consumed by credentials(), wired up with the publish UI
+const DEFAULT_GDOC_CLIENT_ID: Option<&str> = option_env!("PENKNIFE_GDOC_DEFAULT_CLIENT_ID");
+#[allow(dead_code)] // consumed by credentials(), wired up with the publish UI
+const DEFAULT_GDOC_CLIENT_SECRET: Option<&str> = option_env!("PENKNIFE_GDOC_DEFAULT_CLIENT_SECRET");
+
+impl GdocConfig {
+    /// Resolve to usable credentials, or None if no client is configured
+    /// anywhere (config, env, compiled default).
+    #[allow(dead_code)] // wired up with the publish UI
+    pub fn credentials(&self) -> Option<penknife_gdoc::Credentials> {
+        let client_id = self
+            .client_id
+            .clone()
+            .or_else(|| std::env::var("PENKNIFE_GDOC_CLIENT_ID").ok())
+            .or_else(|| DEFAULT_GDOC_CLIENT_ID.map(str::to_string))
+            .filter(|s| !s.is_empty())?;
+        let client_secret = self
+            .client_secret
+            .clone()
+            .or_else(|| std::env::var("PENKNIFE_GDOC_CLIENT_SECRET").ok())
+            .or_else(|| DEFAULT_GDOC_CLIENT_SECRET.map(str::to_string))
+            .filter(|s| !s.is_empty())?;
+        Some(penknife_gdoc::Credentials {
+            client_id,
+            client_secret,
+        })
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -115,6 +158,8 @@ pub struct Config {
     pub sort: SortConfig,
     #[serde(default)]
     pub poll: PollConfig,
+    #[serde(default)]
+    pub gdoc: GdocConfig,
     /// User-defined single-character key → shell-command map. Run from Normal
     /// mode via `sh -c`, with PWD set to the active root. Keys conflicting
     /// with built-in TUI bindings are dropped at load time with a warning.
@@ -215,6 +260,25 @@ mod tests {
         let cfg: Config = toml::from_str("[poll]\nremote_secs = 60\n").unwrap();
         assert_eq!(cfg.poll.remote_secs, 60);
         assert_eq!(cfg.poll.local_secs, 5);
+    }
+
+    #[test]
+    fn gdoc_credentials_resolve_from_config() {
+        let cfg: Config =
+            toml::from_str("[gdoc]\nclient_id = \"id\"\nclient_secret = \"sec\"\n").unwrap();
+        let creds = cfg.gdoc.credentials().expect("configured credentials");
+        assert_eq!(creds.client_id, "id");
+        assert_eq!(creds.client_secret, "sec");
+    }
+
+    #[test]
+    fn gdoc_credentials_absent_without_any_source() {
+        // Dev builds have no compiled default; without config or env the
+        // backend is simply unavailable. (Env vars are not set in tests.)
+        let cfg: Config = toml::from_str("").unwrap();
+        if std::env::var("PENKNIFE_GDOC_CLIENT_ID").is_err() {
+            assert!(cfg.gdoc.credentials().is_none());
+        }
     }
 
     #[test]
