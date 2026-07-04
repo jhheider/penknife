@@ -15,7 +15,7 @@ pub enum GistError {
     GhCli(String),
 
     #[error(
-        "Gist file {filename} is {size} bytes — beyond the 10MB raw-fetch limit; clone the gist's git repo instead"
+        "Gist file {filename} is {size} bytes - beyond the 10MB raw-fetch limit; clone the gist's git repo instead"
     )]
     TooLarge { filename: String, size: u64 },
 }

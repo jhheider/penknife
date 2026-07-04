@@ -1,7 +1,7 @@
 //! UI-free application of async sync results to the store (and disk).
 //!
-//! These rules — when a finished pull may overwrite the working file, when
-//! an observed remote divergence may overwrite the live store entry — are
+//! These rules - when a finished pull may overwrite the working file, when
+//! an observed remote divergence may overwrite the live store entry - are
 //! the correctness core of the sync feature. They used to live inline in
 //! `App::handle_async_event`, interleaved with status-bar text and tree
 //! rebuilds, which made them untestable without a terminal. The App layer
@@ -27,7 +27,7 @@ pub enum PullApply {
 
 /// Apply a completed pull: write `content` to `root/rel_path` and record
 /// `entry`, unless the on-disk content no longer hashes to
-/// `expected_local_sha256` — the snapshot taken when the pull started.
+/// `expected_local_sha256` - the snapshot taken when the pull started.
 pub fn apply_pull(
     store: &mut Store,
     root: &Path,
@@ -69,7 +69,7 @@ pub fn record_divergence(
 
 /// Record a remote observation from a single-file status check (the diff
 /// fetch). Same bookkeeping as [`record_divergence`], but additionally
-/// skipped when the entry synced after the check `started` — that sync
+/// skipped when the entry synced after the check `started` - that sync
 /// result is the newer truth. Returns true if the store changed.
 pub fn record_observation(
     store: &mut Store,

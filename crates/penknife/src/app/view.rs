@@ -48,7 +48,7 @@ impl App {
                 self.files.sort_by(|a, b| b.rel_path.cmp(&a.rel_path));
             }
             SortMode::Status => {
-                // Status rank uses the cached per-file sync state — no
+                // Status rank uses the cached per-file sync state - no
                 // disk reads inside the sort comparator.
                 let cache = &self.status_cache;
                 self.files.sort_by(|a, b| {
@@ -112,7 +112,7 @@ impl App {
     }
 
     /// Recompute one file's cached sync status (one disk read) after a store
-    /// entry changed — push/pull/check results — without rescanning the tree.
+    /// entry changed - push/pull/check results - without rescanning the tree.
     pub(crate) fn refresh_status_for(&mut self, rel_path: &str) {
         let Some(root) = self.current_root().cloned() else {
             return;
@@ -277,7 +277,7 @@ impl App {
                 .as_ref()
                 .and_then(|r| self.store.get(r, rel))
                 .cloned();
-            // Cached status — populated in refresh_files. One disk read per
+            // Cached status - populated in refresh_files. One disk read per
             // file per refresh instead of one per status-bar update.
             let status = self.cached_status(rel);
             self.status_color = status.color();

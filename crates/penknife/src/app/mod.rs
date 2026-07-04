@@ -173,7 +173,7 @@ pub struct App {
     /// concatenated text equals `status_message`, the renderer uses these for
     /// a multi-color dashboard; otherwise it falls back to the flat string +
     /// `status_color`. This means transient setters that touch only
-    /// `status_message` don't need to clear spans — the mismatch invalidates
+    /// `status_message` don't need to clear spans - the mismatch invalidates
     /// the rich version automatically.
     pub status_spans: Vec<Span<'static>>,
     pub picker_editor: LineEditor,
@@ -208,7 +208,7 @@ pub struct App {
     /// If set, main.rs should suspend the TUI and run this shell command
     /// (via `sh -c`) with PWD set to the active root, then resume.
     pub pending_alias: Option<String>,
-    /// Multi-file find-and-replace state — populated as the user moves
+    /// Multi-file find-and-replace state - populated as the user moves
     /// through ReplaceQuery → ReplaceTarget → ReplaceReview.
     pub replace_query: String,
     pub replace_target: String,
@@ -235,7 +235,7 @@ pub enum PaneFocus {
 }
 
 /// Single-character keys reserved by the TUI's built-in bindings. User
-/// aliases cannot shadow these — conflicting entries are dropped at load
+/// aliases cannot shadow these - conflicting entries are dropped at load
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
@@ -332,7 +332,7 @@ impl App {
         // Populate the per-file sync-status cache and git status before the
         // first tree build so leaf glyphs reflect the loaded store right away.
         // Without the status pass, every file paints as NotGisted until the
-        // first `r` ran `refresh_files` — making a freshly-loaded store look
+        // first `r` ran `refresh_files` - making a freshly-loaded store look
         // entirely unsynced.
         app.refresh_status_cache();
         app.refresh_git_status();
@@ -340,6 +340,9 @@ impl App {
         app.update_status();
         if let Some(w) = alias_warning {
             app.status_message = w;
+        }
+        if app.config.check_on_startup && app.token.is_some() && !app.files.is_empty() {
+            app.start_remote_check();
         }
         Ok(app)
     }

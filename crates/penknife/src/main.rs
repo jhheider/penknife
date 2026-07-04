@@ -114,7 +114,7 @@ fn parse_cli_args() -> Option<CliAction> {
         "-V" | "--version" => Some(CliAction::Version),
         "-c" | "--config" => Some(CliAction::EditConfig),
         other => {
-            eprintln!("wm: unknown argument: {other}");
+            eprintln!("penknife: unknown argument: {other}");
             eprintln!("Run with --help to see options.");
             std::process::exit(2);
         }
@@ -125,9 +125,9 @@ fn run_cli_action(action: CliAction) -> color_eyre::Result<()> {
     match action {
         CliAction::Help => {
             println!(
-                "wm — a TUI for managing markdown files synced to GitHub Gists\n\n\
+                "penknife - git-style remotes for your documents\n\n\
                  USAGE:\n  \
-                 wm [FLAGS]\n\n\
+                 penknife [FLAGS]\n\n\
                  FLAGS:\n  \
                  -h, --help, -?    Show this message\n  \
                  -V, --version     Print version\n  \
@@ -138,7 +138,7 @@ fn run_cli_action(action: CliAction) -> color_eyre::Result<()> {
             Ok(())
         }
         CliAction::Version => {
-            println!("wm {}", env!("CARGO_PKG_VERSION"));
+            println!("penknife {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         CliAction::EditConfig => {
@@ -247,7 +247,7 @@ fn suspend_and_run_alias(
     );
     let _ = io::stdout().flush();
     enable_raw_mode()?;
-    // Drain whatever event arrives — Key, Mouse, Resize all dismiss.
+    // Drain whatever event arrives - Key, Mouse, Resize all dismiss.
     let _ = crossterm::event::read();
     // raw mode stays on for the TUI; we don't need to toggle it off again.
     io::stdout().execute(EnterAlternateScreen)?;

@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum WmError {
+pub enum PkError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -15,4 +15,4 @@ pub enum WmError {
     Other(String),
 }
 
-pub type Result<T> = std::result::Result<T, WmError>;
+pub type Result<T> = std::result::Result<T, PkError>;

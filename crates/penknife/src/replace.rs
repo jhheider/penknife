@@ -41,7 +41,7 @@ pub struct ApplyResult {
     pub drifted: usize,
     /// Files we couldn't read or write. The string is the OS error.
     pub errors: Vec<(PathBuf, String)>,
-    /// Distinct files that were modified — useful for refresh + status text.
+    /// Distinct files that were modified - useful for refresh + status text.
     pub files_changed: Vec<PathBuf>,
 }
 
@@ -52,7 +52,7 @@ pub fn scan(scope: &Path, root: &Path, query: &str) -> Vec<ReplaceMatch> {
     if query.is_empty() {
         return Vec::new();
     }
-    // Find/replace honors no ignore patterns of its own — if the user has
+    // Find/replace honors no ignore patterns of its own - if the user has
     // narrowed the picker (via [ignore] in config) those exclusions belong
     // to the *tree*, not to substring search across the directory.
     let files = match scanner::scan_directory(scope, &globset::GlobSet::empty()) {
@@ -161,7 +161,7 @@ mod tests {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let mut p = std::env::temp_dir();
         p.push(format!(
-            "wm-replace-test-{}-{}",
+            "penknife-replace-test-{}-{}",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));

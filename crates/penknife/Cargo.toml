@@ -1,7 +1,13 @@
 [package]
-name = "wm"
-version = "0.1.0"
-edition = "2024"
+name = "penknife"
+description = "Git-style remotes for your documents: publish a folder of markdown to Gists and more, and track every copy for drift"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["tui", "markdown", "gist", "notes", "sync"]
+categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
 gist-rs = { path = "../gist-rs" }

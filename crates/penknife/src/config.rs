@@ -10,7 +10,7 @@ use crate::error::Result;
 pub struct Root {
     pub path: PathBuf,
     /// Glob patterns (gitignore-style, matched against rel_path) of files to
-    /// skip in the tree. Recursive patterns require `**` — `*.md` matches a
+    /// skip in the tree. Recursive patterns require `**` - `*.md` matches a
     /// single path segment, not subdirectories.
     #[serde(default)]
     pub ignore: Vec<String>,
@@ -83,6 +83,8 @@ pub struct Config {
     pub roots: Vec<Root>,
     #[serde(default)]
     pub sort: SortConfig,
+    #[serde(default)]
+    pub check_on_startup: bool,
     /// User-defined single-character key → shell-command map. Run from Normal
     /// mode via `sh -c`, with PWD set to the active root. Keys conflicting
     /// with built-in TUI bindings are dropped at load time with a warning.
@@ -92,9 +94,18 @@ pub struct Config {
 
 impl Config {
     pub fn data_dir() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("writings-manager")
+        let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+        let dir = base.join("penknife");
+        // One-shot migration from the pre-rename data dir. Only fires while the
+        // new dir doesn't exist; a failed rename falls back to the old dir so
+        // state is never split across both.
+        if !dir.exists() {
+            let legacy = base.join("writings-manager");
+            if legacy.exists() && std::fs::rename(&legacy, &dir).is_err() {
+                return legacy;
+            }
+        }
+        dir
     }
 
     pub fn config_path() -> PathBuf {
@@ -121,7 +132,7 @@ impl Config {
         let dir = Self::data_dir();
         std::fs::create_dir_all(&dir)?;
         let data = toml::to_string_pretty(self)
-            .map_err(|e| crate::error::WmError::Other(format!("toml serialize: {e}")))?;
+            .map_err(|e| crate::error::PkError::Other(format!("toml serialize: {e}")))?;
         std::fs::write(Self::config_path(), data)?;
         Ok(())
     }

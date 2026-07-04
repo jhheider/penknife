@@ -60,7 +60,7 @@ impl App {
                     ) {
                         Ok(PullApply::DriftRefused) => {
                             self.status_message = format!(
-                                "{rel_path} changed on disk during pull — not overwriting. Pull again to retry."
+                                "{rel_path} changed on disk during pull - not overwriting. Pull again to retry."
                             );
                         }
                         Ok(PullApply::Applied) => {
@@ -106,7 +106,7 @@ impl App {
                 }
                 self.mode = Mode::Confirm {
                     message: format!(
-                        "Remote gist for {rel_path} changed since last sync. Force push (overwrites remote — use D to diff first)?"
+                        "Remote gist for {rel_path} changed since last sync. Force push (overwrites remote - use D to diff first)?"
                     ),
                     action: ConfirmAction::ForcePush {
                         rel_path: rel_path.clone(),
@@ -199,7 +199,7 @@ impl App {
                 result,
             } => match result {
                 Ok(full) => {
-                    // A diff fetch is also a remote observation — persist it
+                    // A diff fetch is also a remote observation - persist it
                     // so the tree reflects any divergence it revealed. Skip
                     // if the entry synced while the fetch was in flight.
                     if sync_apply::record_observation(
@@ -271,7 +271,7 @@ impl App {
                     self.status_message = if synced {
                         format!("Linked {rel_path} → {url} (in sync)")
                     } else {
-                        format!("Linked {rel_path} → {url} (differs — D to diff, u/d to reconcile)")
+                        format!("Linked {rel_path} → {url} (differs - D to diff, u/d to reconcile)")
                     };
                 }
                 Err(e) => {
@@ -700,7 +700,7 @@ impl App {
             self.status_message = format!("Mapped {rel} → {}", cand.url);
         }
         // The candidates here failed the content match, so the remote almost
-        // certainly differs from local — fetch its real hash in the
+        // certainly differs from local - fetch its real hash in the
         // background so the tree shows the divergence instead of a
         // fabricated "Synced".
         if let Some(token) = self.token.clone() {
@@ -776,20 +776,20 @@ async fn build_link_entry(
     local_filename: &str,
     local_content: &str,
 ) -> crate::error::Result<FileEntry> {
-    use crate::error::WmError;
+    use crate::error::PkError;
     let gist = client.get(gist_id).await?;
     // Prefer the gist file whose name matches the local basename; fall back to
     // the sole file in a single-file gist. A multi-file gist with no name
-    // match is genuinely ambiguous — refuse rather than guess.
+    // match is genuinely ambiguous - refuse rather than guess.
     let chosen = if gist.files.contains_key(local_filename) {
         local_filename.to_string()
     } else if gist.files.len() == 1 {
         gist.files.keys().next().cloned().expect("len==1 has a key")
     } else if gist.files.is_empty() {
-        return Err(WmError::Other(format!("Gist {gist_id} has no files.")));
+        return Err(PkError::Other(format!("Gist {gist_id} has no files.")));
     } else {
         let names: Vec<&str> = gist.files.keys().map(|s| s.as_str()).collect();
-        return Err(WmError::Other(format!(
+        return Err(PkError::Other(format!(
             "Gist {gist_id} has multiple files ({}); none named '{local_filename}'. \
              Rename the local file to match one, or link via a single-file gist.",
             names.join(", ")

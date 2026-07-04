@@ -23,7 +23,7 @@ impl App {
     }
 
     /// Prompt to move the selected file to the OS trash. The remote gist (if
-    /// any) is left intact — restore-from-trash + hydration will re-link it.
+    /// any) is left intact - restore-from-trash + hydration will re-link it.
     pub(crate) fn confirm_trash_local(&mut self) {
         let Some(rel) = self.selected_file() else {
             return;
@@ -46,7 +46,7 @@ impl App {
         };
     }
 
-    /// Actually trash the file and prune its store mapping. Synchronous —
+    /// Actually trash the file and prune its store mapping. Synchronous -
     /// `trash::delete` is a quick OS call.
     pub(crate) fn do_trash_local(&mut self, rel_path: String, root: PathBuf) {
         let abs = root.join(&rel_path);
@@ -165,14 +165,14 @@ impl App {
     /// and (if mapped) kick off the remote gist filename update.
     pub(crate) fn do_rename(&mut self, old_rel: String, new_rel: String) {
         if new_rel.is_empty() {
-            self.status_message = "Empty filename — rename cancelled.".into();
+            self.status_message = "Empty filename - rename cancelled.".into();
             return;
         }
         if new_rel == old_rel {
-            self.status_message = "No change — rename cancelled.".into();
+            self.status_message = "No change - rename cancelled.".into();
             return;
         }
-        // Disallow absolute paths or backtracking — rename stays under the root.
+        // Disallow absolute paths or backtracking - rename stays under the root.
         if new_rel.starts_with('/') || new_rel.split('/').any(|c| c == "..") {
             self.status_message =
                 "New name must be a relative path under the root (no .. or leading /).".into();
@@ -279,7 +279,7 @@ impl App {
         Some(root)
     }
 
-    /// Display label for the scope — e.g. "Red Hand of Doom/rp-posts" or
+    /// Display label for the scope - e.g. "Red Hand of Doom/rp-posts" or
     /// "(root)" for the active root itself.
     pub fn replace_scope_label(&self) -> String {
         let Some(root) = self.active_root_path() else {
@@ -334,7 +334,7 @@ impl App {
         let n = matches.len();
         self.replace_checked = vec![true; n];
         self.replace_matches = matches;
-        self.status_message = format!("Found {n} matches — review and apply.");
+        self.status_message = format!("Found {n} matches - review and apply.");
         self.mode = Mode::ReplaceReview { selected: 0 };
     }
 
@@ -346,7 +346,7 @@ impl App {
             .filter_map(|(m, c)| if *c { Some(m.clone()) } else { None })
             .collect();
         if to_apply.is_empty() {
-            self.status_message = "Nothing checked — no changes applied.".into();
+            self.status_message = "Nothing checked - no changes applied.".into();
             self.mode = Mode::Normal;
             return;
         }
@@ -360,13 +360,13 @@ impl App {
             if n_files == 1 { "" } else { "s" }
         );
         if result.drifted > 0 {
-            msg.push_str(&format!(" — {} skipped (file changed)", result.drifted));
+            msg.push_str(&format!(" - {} skipped (file changed)", result.drifted));
         }
         if !result.errors.is_empty() {
-            msg.push_str(&format!(" — {} write error(s)", result.errors.len()));
+            msg.push_str(&format!(" - {} write error(s)", result.errors.len()));
         }
         if let Err(e) = self.refresh_files() {
-            msg.push_str(&format!(" — refresh failed: {e}"));
+            msg.push_str(&format!(" - refresh failed: {e}"));
         }
         self.update_preview();
         self.update_status();
@@ -539,7 +539,7 @@ impl App {
             return;
         };
         let Some(rel) = self.selected_file() else {
-            // No file selected — show repo-wide log instead.
+            // No file selected - show repo-wide log instead.
             self.pending_alias = Some(format!("git -C {} log", shell_quote(&repo)));
             return;
         };

@@ -84,7 +84,7 @@ pub fn hints(mode: &Mode, focused_pane: PaneFocus) -> Vec<Hint> {
 
 /// Render the keybar into `area` (expected height: 1 row). Keys are yellow
 /// and bold, verbs dim; entries past the right edge are clipped, which is
-/// fine — hints are ordered most-useful-first.
+/// fine - hints are ordered most-useful-first.
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let key_style = Style::default()
         .fg(Color::Yellow)

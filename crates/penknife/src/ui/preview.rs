@@ -44,9 +44,9 @@ fn highlight_json(content: &str) -> Vec<Line<'static>> {
     let pretty = match serde_json::from_str::<serde_json::Value>(content) {
         Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_else(|_| content.to_string()),
         Err(_) => {
-            // Not valid JSON — show raw with a dim banner up top.
+            // Not valid JSON - show raw with a dim banner up top.
             let mut out = vec![Line::styled(
-                "(invalid JSON — showing raw)".to_string(),
+                "(invalid JSON - showing raw)".to_string(),
                 Style::default()
                     .fg(Color::Red)
                     .add_modifier(Modifier::ITALIC),
@@ -81,7 +81,7 @@ fn highlight_json_line(line: &str) -> Line<'static> {
             if i < bytes.len() {
                 i += 1; // include closing quote
             }
-            // Peek for the next non-whitespace char — colon means this
+            // Peek for the next non-whitespace char - colon means this
             // is an object key, anything else means it's a string value.
             let mut j = i;
             while j < bytes.len() && bytes[j].is_ascii_whitespace() {
@@ -206,7 +206,7 @@ fn highlight(content: &str) -> Vec<Line<'static>> {
 ///
 /// Recognizes the standard GFM shape: a header row, a separator row whose
 /// cells are all dashes (optionally with `:` for alignment), then zero or
-/// more body rows — all starting with `|` after trim.
+/// more body rows - all starting with `|` after trim.
 fn try_render_table(lines: &[&str], start: usize, out: &mut Vec<Line<'static>>) -> Option<usize> {
     if start + 1 >= lines.len() {
         return None;
@@ -334,7 +334,7 @@ fn split_cells(line: &str) -> Vec<String> {
 
 /// Split `text` on inline `<br>` tags (case-insensitive, with optional self-
 /// closing slash and surrounding whitespace: `<br>`, `<br/>`, `<br />`, `<BR>`).
-/// Returns at least one element — the original text if no tags were found.
+/// Returns at least one element - the original text if no tags were found.
 /// Used for both body content (line continuations) and table cells (multi-
 /// line cells).
 fn split_br(text: &str) -> Vec<String> {
@@ -618,7 +618,7 @@ mod tests {
         // The "in block" line is inside the fence, so its single span should
         // be styled green (whole-line code block style).
         let in_block = &lines[2];
-        // It's a single styled line — we only verify it has at least one span.
+        // It's a single styled line - we only verify it has at least one span.
         assert!(!in_block.spans.is_empty());
     }
 
@@ -691,7 +691,7 @@ mod tests {
 
     #[test]
     fn table_cell_br_expands_row_height() {
-        // Right cell has 3 sub-lines, left has 1 — row should render as 3 visual
+        // Right cell has 3 sub-lines, left has 1 - row should render as 3 visual
         // body lines, with the left cell padded blank on rows 2 and 3.
         let md = "| Name | Stats |\n|---|---|\n| Goblin | HP: 7<br>AC: 15<br>STR: 8 |\n";
         let lines = highlight(md);
@@ -742,7 +742,7 @@ mod tests {
 
     #[test]
     fn json_highlight_keys_and_strings_get_different_styles() {
-        // "k": "v" — first quoted token is a key (cyan), second is a value (green).
+        // "k": "v" - first quoted token is a key (cyan), second is a value (green).
         let line = highlight_json_line(r#"  "name": "Goblin","#);
         let styled: Vec<_> = line
             .spans
@@ -767,7 +767,7 @@ mod tests {
     fn table_inside_code_block_is_not_parsed() {
         let md = "```\n| a | b |\n|---|---|\n| 1 | 2 |\n```\n";
         let lines = highlight(md);
-        // 5 lines, all inside the fence — none should be rendered as box-drawing.
+        // 5 lines, all inside the fence - none should be rendered as box-drawing.
         for l in &lines {
             let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
             assert!(

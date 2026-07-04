@@ -7,4 +7,4 @@ a:
 # install a Rust binary
 [group('builds')]
 install:
-    @cargo install --locked --force --path crates/wm
+    @cargo install --locked --force --path crates/penknife

@@ -15,7 +15,7 @@ pub struct ScannedFile {
 
 /// Text file extensions surfaced in the tree. Limited to formats that
 /// round-trip cleanly through a gist (text, diffable). Binary formats
-/// (pdf/png/etc.) are intentionally excluded — they don't fit the sync model.
+/// (pdf/png/etc.) are intentionally excluded - they don't fit the sync model.
 pub fn is_supported_ext(ext: &str) -> bool {
     matches!(ext, "md" | "json")
 }
@@ -49,7 +49,7 @@ fn walk_dir(root: &Path, dir: &Path, ignore: &GlobSet, out: &mut Vec<ScannedFile
             continue;
         }
         if path.is_dir() {
-            // Test the directory's rel_path against ignore patterns first —
+            // Test the directory's rel_path against ignore patterns first -
             // skipping a dir avoids descending into a potentially large tree.
             let rel = path
                 .strip_prefix(root)

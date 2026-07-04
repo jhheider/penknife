@@ -1,6 +1,6 @@
 //! Lightweight git integration: detect whether the active root is inside
 //! a git repository, and (if so) query `git status --porcelain` to surface
-//! staged/modified/untracked state in the tree. Read-only — never modifies
+//! staged/modified/untracked state in the tree. Read-only - never modifies
 //! the repo from here. The few write-side commands (`git pull --rebase`,
 //! `git push`) shell out via the existing suspend/resume pattern in main.rs.
 
@@ -36,7 +36,7 @@ pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
 }
 
 /// Run `git status --porcelain=v1 -z` from `repo_root` and parse the output.
-/// Returns a map keyed by path *relative to `repo_root`* — callers must
+/// Returns a map keyed by path *relative to `repo_root`* - callers must
 /// translate to their own rel_path space if `tree_root` differs.
 ///
 /// On error (git not on PATH, repo too broken, etc.), returns an empty map.
@@ -82,7 +82,7 @@ fn parse_porcelain(bytes: &[u8]) -> HashMap<String, GitStatus> {
             }
         };
         i += 1; // skip the NUL
-        // Renamed entries (R..) carry an "old path\0" after the new path —
+        // Renamed entries (R..) carry an "old path\0" after the new path -
         // skip it so we don't try to parse it as the next record's XY.
         if x == 'R' || x == 'C' {
             while i < bytes.len() && bytes[i] != 0 {
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn parse_porcelain_staged_and_modified() {
-        // "MM path\0" — staged change *and* further unstaged tweaks
+        // "MM path\0" - staged change *and* further unstaged tweaks
         let bytes = b"MM file.md\0";
         let m = parse_porcelain(bytes);
         let s = m.get("file.md").unwrap();

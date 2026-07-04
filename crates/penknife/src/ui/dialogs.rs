@@ -59,7 +59,7 @@ fn modal_for_lines(area: Rect, lines: &[Line], min_width: u16) -> Rect {
 /// Render the help overlay.
 pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
     // Section headers and key/description pairs. Each pair is rendered with
-    // the key chord in yellow/bold and the description in default white —
+    // the key chord in yellow/bold and the description in default white -
     // makes the table easier to scan than the previous monochrome block.
     let sections: &[(&str, &[(&str, &str)])] = &[
         (
@@ -87,7 +87,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("_", "Move local file to system trash (with confirm)"),
                 ("D", "Diff local vs remote"),
                 ("f", "Check remote for changes (updates status icons)"),
-                ("H", "Hydrate — match existing gists to files (incremental)"),
+                ("H", "Hydrate - match existing gists to files (incremental)"),
                 ("L", "Link selected file to an existing gist by URL/ID"),
             ],
         ),
@@ -697,7 +697,7 @@ pub fn render_replace_review(f: &mut Frame, area: Rect, app: &App, selected: usi
         Span::styled("' → '", dim),
         Span::styled(
             if app.replace_target.is_empty() {
-                "(empty — delete matches)".to_string()
+                "(empty - delete matches)".to_string()
             } else {
                 app.replace_target.clone()
             },
@@ -751,7 +751,7 @@ pub fn render_replace_review(f: &mut Frame, area: Rect, app: &App, selected: usi
                 Style::default().fg(mark_color).add_modifier(Modifier::BOLD)
             },
         ));
-        // Path:line — magenta path, cyan line number.
+        // Path:line - magenta path, cyan line number.
         spans.push(Span::styled(
             format!("{}:{}", m.rel_path, m.line),
             if is_selected {
