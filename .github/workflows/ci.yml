@@ -6,73 +6,92 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
+  em-dash:
+    name: No em dashes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Fail on em dashes
+        run: |
+          if git grep -In "$(printf '\xe2\x80\x94')" -- ':!*.lock'; then
+            echo "::error::Em dash found. House style: use a comma, colon, or parenthetical instead."
+            exit 1
+          fi
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable]
     steps:
       - uses: actions/checkout@v6
-      
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Run tests
         run: cargo test --verbose
 
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      
+
       - name: Check formatting
         run: cargo fmt -- --check
 
   clippy:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-      
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   build:
     name: Build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        rust: [stable]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-      
+
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
-      
+
       - uses: Swatinem/rust-cache@v2
-      
+
       - name: Build release
         run: cargo build --release --verbose

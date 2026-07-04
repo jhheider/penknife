@@ -1,0 +1,38 @@
+name: Audit
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+  schedule:
+    # Weekly: new advisories land against unchanged lockfiles.
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit
