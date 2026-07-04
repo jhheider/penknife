@@ -81,9 +81,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("o", "Open gist URL in browser"),
                 ("e", "Edit selected file in $EDITOR"),
                 ("m", "Rename / move the selected file"),
-                ("=", "Toggle JSON between compact and pretty in place"),
-                ("X", "Delete remote gist (keeps local file)"),
-                ("_", "Move local file to system trash (with confirm)"),
+                ("X", "Delete menu: remote gist, local file, or both"),
                 ("D", "Diff local vs remote"),
                 ("M", "Resolve ambiguous hydration matches"),
                 ("L", "Link selected file to an existing gist by URL/ID"),
@@ -98,15 +96,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
         ),
         (
             "Git (when root is in a repo)",
-            &[
-                ("g", "Show `git status` in suspended terminal"),
-                (
-                    "G",
-                    "Show `git log -p <file>` (or repo-wide if no selection)",
-                ),
-                ("(", "git pull --rebase (with confirm)"),
-                (")", "git push (with confirm)"),
-            ],
+            &[("g", "Git menu: status / log / pull / push")],
         ),
         (
             "Files & roots",
@@ -116,7 +106,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("O", "Pick sort order for the tree"),
                 ("B", "Bulk ops menu (push/pull dirty, format JSON, prune)"),
                 ("s", "Find & replace (recursive within current scope)"),
-                ("I", "Import a Google Doc as markdown"),
+                ("I", "Import from URL (Google Doc or gist) as markdown"),
                 ("R", "Switch root directory"),
                 ("?", "This help"),
                 ("q", "Quit"),
@@ -883,6 +873,71 @@ fn trim_context(before: &str, after: &str, pad: usize) -> (String, String) {
 
 /// Render the bulk-operations picker. Shows the four ops, each with its
 /// precomputed file count colored by emptiness (dim if 0, yellow/bold if >0).
+/// Render a simple fixed-choice menu: caret + label rows, hint line, titled
+/// modal. Shared chassis for the delete and git menus.
+fn render_choice_menu(f: &mut Frame, area: Rect, title: &str, labels: &[&str], selected: usize) {
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, label) in labels.iter().enumerate() {
+        let is_selected = i == selected;
+        let marker = if is_selected { " ▶ " } else { "   " };
+        let row_style = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker.to_string(), row_style),
+            Span::styled((*label).to_string(), row_style),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "  ↑/↓ navigate · Enter choose · Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let modal = modal_for_lines(area, &lines, 48);
+    f.render_widget(Clear, modal);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title.to_string())
+        .border_style(Style::default().fg(Color::Yellow))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(modal);
+    f.render_widget(block, modal);
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+pub fn render_delete_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
+    let g = crate::glyphs::glyphs();
+    let opts = app.delete_options();
+    let labels: Vec<&str> = opts.iter().map(|o| o.label()).collect();
+    let file = app.selected_file().unwrap_or_default();
+    render_choice_menu(
+        f,
+        area,
+        &format!("{} Delete: {file}", g.warn),
+        &labels,
+        selected,
+    );
+}
+
+pub fn render_git_menu(f: &mut Frame, area: Rect, selected: usize) {
+    let g = crate::glyphs::glyphs();
+    render_choice_menu(
+        f,
+        area,
+        &format!("{} Git", g.file_pane),
+        crate::app::GIT_MENU_LABELS,
+        selected,
+    );
+}
+
 pub fn render_bulk_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
     let opts = app.bulk_options();
     let mut lines: Vec<Line> = Vec::new();

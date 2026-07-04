@@ -101,7 +101,39 @@ pub enum Mode {
     BulkMenu {
         selected: usize,
     },
+    /// Delete menu for the selected file: remote gist, local file, or both.
+    /// `selected` indexes into `delete_options()`.
+    DeleteMenu {
+        selected: usize,
+    },
+    /// Git menu for the active root's repo: status / log / pull / push.
+    /// `selected` indexes into `GIT_MENU_LABELS`.
+    GitMenu {
+        selected: usize,
+    },
 }
+
+/// The delete menu's choices for the selected file. Built contextually:
+/// remote options only appear when the file has a gist mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteChoice {
+    Remote,
+    Local,
+    Both,
+}
+
+impl DeleteChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Remote => "Remote gist (keep local file)",
+            Self::Local => "Local file (to trash; keep gist)",
+            Self::Both => "Both (delete gist, trash file)",
+        }
+    }
+}
+
+/// Labels for the git menu, in display order.
+pub const GIT_MENU_LABELS: &[&str] = &["git status", "git log", "git pull --rebase", "git push"];
 
 /// The four operations offered by the bulk menu. Each carries the rel_paths
 /// (or store keys) it will touch, computed at menu-construction time so the
@@ -152,6 +184,13 @@ pub enum ConfirmAction {
         rel_path: String,
         root: PathBuf,
     },
+    /// Delete the remote gist and trash the local file in one confirmed
+    /// step. The remote delete is async; the trash is immediate.
+    DeleteBoth {
+        rel_path: String,
+        root: PathBuf,
+        gist_id: String,
+    },
     /// A bulk operation, with the file list captured at menu-display time.
     Bulk(BulkAction),
     /// Run a shell command via the suspend/resume pattern. Used by the git
@@ -185,6 +224,9 @@ pub struct App {
     pub picker_matches: Vec<crate::picker::PickerMatch>,
     pub input_editor: LineEditor,
     pub gdoc_content: Option<String>,
+    /// Set when the pending import came from a gist: the mapping to record
+    /// against the file once it's saved. Cleared on save or cancel.
+    pub pending_import_entry: Option<crate::store::FileEntry>,
     pub should_quit: bool,
     pub async_tx: AsyncSender,
     pub token: Option<String>,
@@ -275,8 +317,8 @@ fn files_differ(current: &[ScannedFile], scanned: &[ScannedFile]) -> bool {
 /// aliases cannot shadow these - conflicting entries are dropped at load
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
-    'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
-    'M', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')', 'L', 'f',
+    'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', 'M',
+    'R', 'I', 's', 'm', 'O', 'B', 'g', 'L', 'f',
 ];
 
 impl App {
@@ -343,6 +385,7 @@ impl App {
             picker_matches: Vec::new(),
             input_editor: LineEditor::new(),
             gdoc_content: None,
+            pending_import_entry: None,
             should_quit: false,
             async_tx,
             token,

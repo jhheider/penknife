@@ -4,7 +4,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{App, BulkAction, ConfirmAction, Mode, PaneFocus};
+use super::{App, BulkAction, ConfirmAction, DeleteChoice, GIT_MENU_LABELS, Mode, PaneFocus};
 use crate::ui::input::LineEditor;
 
 impl App {
@@ -30,6 +30,8 @@ impl App {
             Mode::LinkGist { .. } => self.handle_link_gist_key(key),
             Mode::SortMenu { .. } => self.handle_sort_menu_key(key),
             Mode::BulkMenu { .. } => self.handle_bulk_menu_key(key),
+            Mode::DeleteMenu { .. } => self.handle_delete_menu_key(key),
+            Mode::GitMenu { .. } => self.handle_git_menu_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -77,14 +79,13 @@ impl App {
             KeyCode::Char('e') => self.do_request_edit(),
             KeyCode::Char('o') => self.do_open_in_browser(),
             KeyCode::Char('X') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.confirm_delete_remote();
+                self.open_delete_menu();
             }
             KeyCode::Char('n') => self.jump_to_next_dirty(true),
             KeyCode::Char('N') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.jump_to_next_dirty(false);
             }
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
-            KeyCode::Char('_') => self.confirm_trash_local(),
             KeyCode::Char('m') => self.start_rename(),
             KeyCode::Char('L') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_manual_link();
@@ -95,13 +96,7 @@ impl App {
             KeyCode::Char('B') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.start_bulk_menu();
             }
-            KeyCode::Char('g') => self.do_git_status(),
-            KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.do_git_log();
-            }
-            KeyCode::Char('(') => self.confirm_git_pull(),
-            KeyCode::Char(')') => self.confirm_git_push(),
-            KeyCode::Char('=') => self.do_format_in_place(),
+            KeyCode::Char('g') => self.open_git_menu(),
             KeyCode::Char('s') => self.start_replace(),
             KeyCode::Char('f') => self.start_search(),
             KeyCode::Char('M') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -212,7 +207,7 @@ impl App {
             KeyCode::Esc => self.mode = Mode::Normal,
             KeyCode::Enter => {
                 let url = self.input_editor.content.clone();
-                self.start_gdoc_fetch(&url);
+                self.start_import_from_url(&url);
             }
             _ => {
                 self.input_editor.handle_key(key);
@@ -225,6 +220,7 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.gdoc_content = None;
+                self.pending_import_entry = None;
             }
             KeyCode::Enter => self.save_gdoc_import(),
             _ => {
@@ -263,6 +259,19 @@ impl App {
                     gist_id,
                 } => self.do_delete_remote(rel_path, root, gist_id),
                 ConfirmAction::TrashLocal { rel_path, root } => {
+                    self.do_trash_local(rel_path, root);
+                }
+                ConfirmAction::DeleteBoth {
+                    rel_path,
+                    root,
+                    gist_id,
+                } => {
+                    // Remote delete is async (DeleteDone prunes the store
+                    // entry); the trash is immediate. If the remote delete
+                    // later fails, its error lands in the status bar and the
+                    // gist survives; the local file is already in the trash
+                    // and recoverable either way.
+                    self.do_delete_remote(rel_path.clone(), root.clone(), gist_id);
                     self.do_trash_local(rel_path, root);
                 }
                 ConfirmAction::Bulk(action) => {
@@ -462,6 +471,70 @@ impl App {
             _ => {
                 self.input_editor.handle_key(key);
             }
+        }
+    }
+
+    fn handle_delete_menu_key(&mut self, key: KeyEvent) {
+        let Mode::DeleteMenu { selected } = self.mode else {
+            return;
+        };
+        let opts = self.delete_options();
+        let max = opts.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.mode = Mode::DeleteMenu {
+                    selected: (selected + 1).min(max),
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::DeleteMenu {
+                    selected: selected.saturating_sub(1),
+                };
+            }
+            KeyCode::Enter => {
+                let Some(choice) = opts.get(selected).copied() else {
+                    self.mode = Mode::Normal;
+                    return;
+                };
+                match choice {
+                    DeleteChoice::Remote => self.confirm_delete_remote(),
+                    DeleteChoice::Local => self.confirm_trash_local(),
+                    DeleteChoice::Both => self.confirm_delete_both(),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_git_menu_key(&mut self, key: KeyEvent) {
+        let Mode::GitMenu { selected } = self.mode else {
+            return;
+        };
+        let max = GIT_MENU_LABELS.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.mode = Mode::GitMenu {
+                    selected: (selected + 1).min(max),
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::GitMenu {
+                    selected: selected.saturating_sub(1),
+                };
+            }
+            KeyCode::Enter => {
+                self.mode = Mode::Normal;
+                match selected {
+                    0 => self.do_git_status(),
+                    1 => self.do_git_log(),
+                    2 => self.confirm_git_pull(),
+                    3 => self.confirm_git_push(),
+                    _ => {}
+                }
+            }
+            _ => {}
         }
     }
 

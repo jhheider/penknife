@@ -1,6 +1,6 @@
-//! Local file operations: rename/move, trash, JSON formatting,
-//! find-and-replace, clipboard import/export, Google Doc import, the git
-//! shell-out commands, and the bulk-operations menu's actions.
+//! Local file operations: rename/move, trash, find-and-replace, clipboard
+//! import/export, Google Doc import, the git menu's shell-out commands, and
+//! the bulk-operations menu's actions.
 
 use std::path::PathBuf;
 
@@ -67,85 +67,6 @@ impl App {
                 self.status_message = format!("Trash failed: {e}");
             }
         }
-    }
-
-    // ── Format in place ─────────────────────────────────────────────────────
-
-    /// Toggle the selected file between canonical compact and pretty form,
-    /// writing back to disk. Direction is decided by comparing the file to
-    /// its compact serialization: if they match, prettify; otherwise compact.
-    /// Any "almost compact" intermediate (stray spaces, etc.) is normalized
-    /// to compact on the first press; a second press flips to pretty.
-    /// Currently only `.json` is supported.
-    pub(crate) fn do_format_in_place(&mut self) {
-        let Some(rel) = self.selected_file() else {
-            self.status_message = "No file selected.".into();
-            return;
-        };
-        let ext = std::path::Path::new(&rel)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        if ext != "json" {
-            self.status_message = format!("Format not supported for .{ext} files.");
-            return;
-        }
-        let abs = self.abs_path(&rel);
-        let content = match std::fs::read_to_string(&abs) {
-            Ok(c) => c,
-            Err(e) => {
-                self.status_message = format!("Read error: {e}");
-                return;
-            }
-        };
-        let value: serde_json::Value = match serde_json::from_str(&content) {
-            Ok(v) => v,
-            Err(e) => {
-                self.status_message = format!("Invalid JSON, not formatted: {e}");
-                return;
-            }
-        };
-        let compact = match serde_json::to_string(&value) {
-            Ok(s) => s,
-            Err(e) => {
-                self.status_message = format!("Serialize failed: {e}");
-                return;
-            }
-        };
-        // The file is "canonical compact" iff it equals the compact form,
-        // optionally with a single trailing newline.
-        let is_compact = content == compact || content == format!("{compact}\n");
-
-        let (new_text, verb) = if is_compact {
-            let pretty = match serde_json::to_string_pretty(&value) {
-                Ok(s) => s,
-                Err(e) => {
-                    self.status_message = format!("Serialize failed: {e}");
-                    return;
-                }
-            };
-            (format!("{pretty}\n"), "Prettified")
-        } else {
-            (format!("{compact}\n"), "Compacted")
-        };
-
-        if new_text == content {
-            self.status_message = format!("{rel}: already canonical.");
-            return;
-        }
-        let delta = new_text.len() as isize - content.len() as isize;
-        if let Err(e) = std::fs::write(&abs, &new_text) {
-            self.status_message = format!("Write failed: {e}");
-            return;
-        }
-        if let Err(e) = self.refresh_files() {
-            self.status_message = format!("Formatted but refresh failed: {e}");
-            return;
-        }
-        self.update_preview();
-        self.update_status();
-        let sign = if delta >= 0 { "+" } else { "" };
-        self.status_message = format!("{verb} {rel} ({sign}{delta} bytes)");
     }
 
     // ── Rename / move ───────────────────────────────────────────────────────
@@ -543,6 +464,22 @@ impl App {
 
         self.mode = Mode::Normal;
         self.status_message = format!("Saved: {}", path.display());
+
+        // A gist import carries its mapping; record it so the file lands
+        // already linked (and synced) rather than as a stranger.
+        if let Some(entry) = self.pending_import_entry.take()
+            && let Ok(rel) = path.strip_prefix(&root)
+        {
+            let rel_path = rel.to_string_lossy().to_string();
+            let gist_url = entry.url.clone();
+            self.store.insert(&root, rel_path, entry);
+            if let Err(e) = self.store.save() {
+                self.status_message = format!("Saved; store save failed: {e}");
+            } else {
+                self.status_message = format!("Saved and linked to {gist_url}");
+            }
+        }
+
         if let Err(e) = self.refresh_files() {
             self.status_message = format!("Saved but refresh failed: {e}");
         }
@@ -560,6 +497,16 @@ impl App {
                 None
             }
         }
+    }
+
+    /// Open the git menu for the active root. Requires the root to be inside
+    /// a git repo; otherwise says so instead of showing dead options.
+    pub(crate) fn open_git_menu(&mut self) {
+        if self.git_repo_root.is_none() {
+            self.status_message = "Active root is not inside a git repository.".into();
+            return;
+        }
+        self.mode = Mode::GitMenu { selected: 0 };
     }
 
     pub(crate) fn do_git_status(&mut self) {

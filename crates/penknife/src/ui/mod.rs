@@ -194,8 +194,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             dialogs::render_input_dialog(
                 f,
                 f.area(),
-                "Import Google Doc",
-                "Enter Google Doc URL:",
+                "Import from URL",
+                "Google Doc or gist URL (or bare gist ID):",
                 &app.input_editor,
             );
         }
@@ -280,6 +280,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         Mode::BulkMenu { selected } => {
             dialogs::render_bulk_menu(f, f.area(), app, *selected);
+        }
+        Mode::DeleteMenu { selected } => {
+            dialogs::render_delete_menu(f, f.area(), app, *selected);
+        }
+        Mode::GitMenu { selected } => {
+            dialogs::render_git_menu(f, f.area(), *selected);
         }
         _ => {}
     }

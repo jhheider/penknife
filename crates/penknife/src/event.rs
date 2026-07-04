@@ -7,6 +7,16 @@ use tokio::sync::mpsc;
 use crate::hydrate::{AmbiguousMatch, HydrationProgress};
 use crate::store::Store;
 
+/// Payload of a successful gist-import fetch: the file's markdown content,
+/// the gist's filename (prefills the save-as prompt), and the ready-made
+/// store entry (import means local == remote, i.e. born synced).
+#[derive(Debug)]
+pub struct GistImportData {
+    pub content: String,
+    pub filename: String,
+    pub entry: crate::store::FileEntry,
+}
+
 #[derive(Debug)]
 pub struct HydrationDoneData {
     pub matched: usize,
@@ -76,6 +86,9 @@ pub enum AsyncEvent {
     },
     /// Google Doc fetch result
     GdocFetched(std::result::Result<String, String>),
+    /// Gist import fetch result: content plus the mapping to record once the
+    /// file is saved locally.
+    GistImportFetched(std::result::Result<GistImportData, String>),
     /// Remote gist deletion completed
     DeleteDone {
         root: PathBuf,

@@ -313,7 +313,87 @@ impl App {
                     self.mode = Mode::Message(format!("Google Doc error: {e}"));
                 }
             },
+            AsyncEvent::GistImportFetched(result) => match result {
+                Ok(data) => {
+                    self.gdoc_content = Some(data.content);
+                    self.pending_import_entry = Some(data.entry);
+                    // Prefill the save-as prompt with the gist's own filename
+                    // (the prompt appends .md).
+                    self.input_editor = LineEditor::new();
+                    self.input_editor.content = data.filename.trim_end_matches(".md").to_string();
+                    self.input_editor.cursor = self.input_editor.content.len();
+                    self.mode = Mode::GdocFilename;
+                }
+                Err(e) => {
+                    self.mode = Mode::Message(format!("Gist import failed: {e}"));
+                }
+            },
         }
+    }
+
+    /// Route the `I` import prompt. Gist URLs and bare gist IDs go to the
+    /// gist importer; everything else is treated as a Google Doc URL (whose
+    /// own validation rejects junk).
+    pub(crate) fn start_import_from_url(&mut self, raw: &str) {
+        let t = raw.trim();
+        let bare_id =
+            !t.is_empty() && !t.contains('/') && t.chars().all(|c| c.is_ascii_alphanumeric());
+        if (t.contains("gist.github.com") || bare_id)
+            && let Some(id) = parse_gist_id(t)
+        {
+            self.start_gist_import(id);
+            return;
+        }
+        self.start_gdoc_fetch(t);
+    }
+
+    /// Fetch a gist for import as a new local file. Single-file gists only:
+    /// a multi-file gist has no unambiguous "the content". On success the
+    /// save-as prompt opens with the mapping queued; the store write lands
+    /// in `save_gdoc_import` once the file exists on disk.
+    fn start_gist_import(&mut self, id: String) {
+        let Some(token) = self.token.clone() else {
+            self.status_message = "No GitHub token available.".into();
+            self.mode = Mode::Normal;
+            return;
+        };
+        let tx = self.async_tx.clone();
+        self.status_message = "Fetching gist...".into();
+        self.mode = Mode::Normal; // switches to the save-as prompt on result
+
+        self.spawn_tracked(async move {
+            let client = gist_rs::GistClient::new(token);
+            let result = async {
+                let gist = client.get(&id).await.map_err(|e| e.to_string())?;
+                if gist.files.len() != 1 {
+                    return Err(format!(
+                        "gist has {} files; only single-file gists can be imported (use L to link)",
+                        gist.files.len()
+                    ));
+                }
+                let filename = gist.files.keys().next().cloned().unwrap_or_default();
+                let content = client
+                    .file_content(&gist, &filename)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "gist file has no content".to_string())?;
+                let sha = sync::sha256_hex(&content);
+                Ok(crate::event::GistImportData {
+                    entry: FileEntry {
+                        gist_id: gist.id.clone(),
+                        url: gist.html_url.clone(),
+                        local_sha256: sha.clone(),
+                        remote_sha256: sha,
+                        last_synced: chrono::Utc::now(),
+                        remote_updated_at: Some(gist.updated_at),
+                    },
+                    content,
+                    filename,
+                })
+            }
+            .await;
+            let _ = tx.send(AsyncEvent::GistImportFetched(result));
+        });
     }
 
     pub(crate) fn do_sync_up(&mut self) {
@@ -471,6 +551,61 @@ impl App {
             Ok(()) => self.status_message = format!("Opened {}", entry.url),
             Err(e) => self.status_message = format!("Open failed: {e}"),
         }
+    }
+
+    /// Open the delete menu for the selected file. Options are contextual:
+    /// remote choices only appear when the file has a gist mapping.
+    pub(crate) fn open_delete_menu(&mut self) {
+        if self.selected_file().is_none() {
+            self.status_message = "No file selected.".into();
+            return;
+        }
+        if self.delete_options().is_empty() {
+            self.status_message = "Nothing to delete.".into();
+            return;
+        }
+        self.mode = Mode::DeleteMenu { selected: 0 };
+    }
+
+    /// The delete choices valid for the selected file, in display order.
+    pub(crate) fn delete_options(&self) -> Vec<crate::app::DeleteChoice> {
+        use crate::app::DeleteChoice;
+        let Some(rel) = self.selected_file() else {
+            return Vec::new();
+        };
+        let has_gist = self
+            .active_root_path()
+            .is_some_and(|root| self.store.get(&root, &rel).is_some());
+        if has_gist {
+            vec![
+                DeleteChoice::Remote,
+                DeleteChoice::Local,
+                DeleteChoice::Both,
+            ]
+        } else {
+            vec![DeleteChoice::Local]
+        }
+    }
+
+    pub(crate) fn confirm_delete_both(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            return;
+        };
+        let Some(root) = self.active_root_path() else {
+            return;
+        };
+        let Some(entry) = self.store.get(&root, &rel).cloned() else {
+            self.status_message = "No gist to delete.".into();
+            return;
+        };
+        self.mode = Mode::Confirm {
+            message: format!("Delete the remote gist for {rel} AND move the local file to trash?"),
+            action: ConfirmAction::DeleteBoth {
+                rel_path: rel,
+                root,
+                gist_id: entry.gist_id,
+            },
+        };
     }
 
     pub(crate) fn confirm_delete_remote(&mut self) {

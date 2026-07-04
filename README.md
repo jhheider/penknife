@@ -20,7 +20,7 @@ Where it fits: your editor is where you write. A git remote or sync service is h
 - Find in files (`f`): content search across the current scope with a jump list; Enter opens the matched file
 - Find and replace (`s`): recursive substring search within the current scope, per-match review checklist with line context, drift detection on apply
 - Markdown preview with syntax highlighting
-- Google Doc import: fetch a public Google Doc and save it as markdown under any tree
+- Import from URL (`I`): fetch a public Google Doc as markdown, or a single-file gist (which arrives already linked and synced)
 - Rich paste (`V`): clipboard HTML converts to markdown on the way in
 - Atomic on-disk state, with retry/backoff and rate-limit awareness for the GitHub API
 
@@ -93,13 +93,12 @@ Tokens are **not** persisted by this tool; they're resolved fresh on each launch
 | `o` | Normal | Open gist URL in the system browser |
 | `e` | Normal | Edit selected file in `$EDITOR` (TUI suspends, then refreshes) |
 | `m` | Normal | Rename / move the selected file (updates store and remote gist filename) |
-| `=` | Normal | Toggle JSON between compact and pretty form in place |
-| `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
-| `_` | Normal | Move local file to the system trash (with confirmation) |
+| `X` | Normal | Delete menu: remote gist, local file (trash), or both (with confirmation) |
+| `g` | Normal | Git menu: status / log / pull / push (when root is in a repo) |
 | `f` | Normal | Find in files: content search with a jump list |
 | `M` | Normal | Resolve ambiguous hydration matches (see below) |
 | `L` | Normal | Link the selected file to an existing gist by URL or ID |
-| `I` | Normal | Import a Google Doc as markdown |
+| `I` | Normal | Import from URL: a public Google Doc, or a gist (imports linked and synced) |
 | `R` | Normal | Switch root directory |
 | `q` | Normal | Quit |
 | `j/k` `↑/↓` `PgUp/PgDn` | Diff | Scroll the diff |
