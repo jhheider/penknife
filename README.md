@@ -1,58 +1,63 @@
-# writings-manager
+# penknife
 
-A terminal UI for managing local markdown files synced to GitHub Gists.
+Git-style remotes for your documents.
+
+Point penknife at a folder of markdown (an Obsidian vault, a notes directory, anywhere you write) and publish files to GitHub Gists. It tracks every published copy and shows you, per file, whether it is current, ahead, behind, or diverged. More backends are planned; see [ABOUT.md](ABOUT.md) for the roadmap.
+
+Where it fits: your editor is where you write. A git remote or sync service is how you back up. penknife is how you share, and how you know your shares haven't gone stale.
 
 ## Features
 
-- **Tree-based file browser** for one or more local writing directories, arbitrarily nested — supports `.md` and `.json` (with pretty-printed, syntax-highlighted JSON preview)
-- **Push / pull / delete** local markdown files to/from gists; per-file sync status with at-a-glance counts in the status bar. Pushes refuse to overwrite a remote that changed since the last sync (with a force option after review)
-- **Remote check** (`f`) — one cheap API listing detects gists edited on the web or another machine, lighting up the ⬇️/❗ icons without pulling anything
-- **Diff view** of local vs remote
-- **Open gist in browser** (`o`) and **copy gist URL** (`c`) for quick sharing
-- **Jump to next/previous dirty file** (`n` / `N`) for triage
-- **Hydration** — match existing gists to local files by filename + content hash, with an interactive resolver for ambiguous cases
-- **Multi-root** — switch between several configured directories from inside the app
-- **Fuzzy file picker** (`/`) — fzf-style modal with smartcase matching and inline highlights, powered by [nucleo](https://crates.io/crates/nucleo-matcher)
-- **Find & replace** (`s`) — recursive substring search within the current scope (selected dir or root), per-match review checklist with line context, drift-detection on apply
-- **Markdown preview** with syntax highlighting (headings, code blocks, inline code, bold, italic, lists, blockquotes)
-- **Google Doc import** — fetch a public Google Doc and save it as markdown under any tree
-- **Atomic on-disk state** with retry/backoff and rate-limit awareness for the GitHub API
+- Tree-based browser for one or more local writing directories, arbitrarily nested. Supports `.md` and `.json` (with pretty-printed, syntax-highlighted JSON preview)
+- Push, pull, and delete against gists, with per-file sync status and at-a-glance counts in the status bar. Pushes refuse to overwrite a remote that changed since the last sync (with a force option after review)
+- Remote check (`f`): one cheap API listing detects gists edited on the web or another machine, lighting up the behind/conflict icons without pulling anything
+- Diff view of local vs remote
+- Open gist in browser (`o`) and copy gist URL (`c`) for quick sharing
+- Jump to next/previous dirty file (`n` / `N`) for triage
+- Hydration: match existing gists to local files by filename and content hash, with an interactive resolver for ambiguous cases
+- Multi-root: switch between several configured directories from inside the app
+- Fuzzy file picker (`/`): fzf-style modal with smartcase matching and inline highlights, powered by [nucleo](https://crates.io/crates/nucleo-matcher)
+- Find and replace (`s`): recursive substring search within the current scope, per-match review checklist with line context, drift detection on apply
+- Markdown preview with syntax highlighting
+- Google Doc import: fetch a public Google Doc and save it as markdown under any tree
+- Rich paste (`V`): clipboard HTML converts to markdown on the way in
+- Atomic on-disk state, with retry/backoff and rate-limit awareness for the GitHub API
 
-## Quick Start
+## Quick start
 
 ### Prerequisites
 
-- Rust (edition 2024 toolchain — `rustup update stable` if you're behind)
+- Rust (edition 2024 toolchain; `rustup update stable` if you're behind)
 - A GitHub token with `gist` scope, exposed via `$GITHUB_TOKEN` or `gh auth token`
 
 ### Install
 
 ```bash
-git clone git@github.com:jhheider/writings-manager.git
-cd writings-manager
-cargo build --release
-./target/release/wm
+git clone git@github.com:jhheider/penknife.git
+cd penknife
+cargo install --locked --path crates/penknife
+penknife
 ```
 
 ### CLI flags
 
 ```
-wm                  # launch the TUI
-wm --config         # open config.toml in $EDITOR
-wm --version        # print version
-wm --help           # print flag help
+penknife            # launch the TUI
+penknife --config   # open config.toml in $EDITOR
+penknife --version  # print version
+penknife --help     # print flag help
 ```
 
 ### First run
 
-If no roots are configured, the app opens a setup dialog. Type a path to a directory of markdown files (`~` is expanded) and press **Enter**. From there, all writings under that directory are scanned recursively.
+If no roots are configured, the app opens a setup dialog. Type a path to a directory of markdown files (`~` is expanded) and press **Enter**. All writings under that directory are scanned recursively.
 
-State is persisted under your platform data dir (`~/Library/Application Support/writings-manager` on macOS, `~/.local/share/writings-manager` on Linux):
+State is persisted under your platform data dir (`~/Library/Application Support/penknife` on macOS, `~/.local/share/penknife` on Linux). An existing `writings-manager` data dir from earlier versions is migrated automatically on first launch.
 
-- `config.toml` — list of configured roots + user-defined aliases
-- `store.json` — per-(root, file) gist mappings
+- `config.toml`: list of configured roots plus user-defined aliases
+- `store.json`: per-(root, file) gist mappings
 
-Edit the config directly with `wm --config` (opens `config.toml` in `$EDITOR`).
+Edit the config directly with `penknife --config` (opens `config.toml` in `$EDITOR`).
 Add user aliases under `[aliases]`:
 
 ```toml
@@ -62,11 +67,9 @@ A = "just ai-commit"
 P = "git push"
 ```
 
-Single-character keys only; keys that conflict with built-in bindings are dropped
-at load time with a warning. Commands run via `sh -c` with PWD set to the
-active root.
+Single-character keys only; keys that conflict with built-in bindings are dropped at load time with a warning. Commands run via `sh -c` with PWD set to the active root.
 
-Tokens are **not** persisted by this tool — they're resolved fresh on each launch.
+Tokens are **not** persisted by this tool; they're resolved fresh on each launch.
 
 ## Usage
 
@@ -74,7 +77,7 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 
 | Key | Mode | Action |
 |---|---|---|
-| `Tab` | Normal | Toggle focus: tree pane ↔ preview/diff pane |
+| `Tab` | Normal | Toggle focus: tree pane / preview-diff pane |
 | `j/k` `↓/↑` | Normal | Navigate the focused pane |
 | `Enter` `l` `→` | Normal (tree) | Expand directory / select file |
 | `h` `←` `Bksp` | Normal (tree) | Collapse directory |
@@ -88,26 +91,16 @@ Tokens are **not** persisted by this tool — they're resolved fresh on each lau
 | `V` | Normal | Paste clipboard (HTML converted to markdown) as a new file |
 | `o` | Normal | Open gist URL in the system browser |
 | `e` | Normal | Edit selected file in `$EDITOR` (TUI suspends, then refreshes) |
-| `m` | Normal | Rename / move the selected file (updates store + remote gist filename) |
+| `m` | Normal | Rename / move the selected file (updates store and remote gist filename) |
 | `=` | Normal | Toggle JSON between compact and pretty form in place |
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
 | `_` | Normal | Move local file to the system trash (with confirmation) |
-| `f` | Normal | Check remote for changes (updates ⬇️/❗ icons and counts) |
-| `H` | Normal | Hydrate — match existing gists to files (incremental; see below) |
+| `f` | Normal | Check remote for changes (updates icons and counts) |
+| `H` | Normal | Hydrate: match existing gists to files (incremental; see below) |
 | `L` | Normal | Link the selected file to an existing gist by URL or ID |
 | `I` | Normal | Import a Google Doc as markdown |
 | `R` | Normal | Switch root directory |
 | `r` | Normal | Refresh the tree |
-| `/` | Normal | Fuzzy file picker (fzf-style) |
-| `O` | Normal | Pick a sort order for the tree (mtime, alpha, status) — persists to config |
-| `B` | Normal | Bulk ops menu: push all dirty, pull all remote-newer, format all JSON, prune store orphans |
-| `g` | Normal | `git status` (suspends TUI) — no-op outside a git repo |
-| `G` | Normal | `git log -p <selected>` (or repo-wide if no selection) |
-| `(` | Normal | `git pull --rebase` (with confirm) |
-| `)` | Normal | `git push` (with confirm) |
-| `s` | Normal | Find & replace (recursive in current scope, with per-match review) |
-| `↑/↓` `Ctrl-p/n` `Enter` `Esc` | Picker | Navigate / open / cancel |
-| `?` | Normal | Help |
 | `q` | Normal | Quit |
 | `j/k` `↑/↓` `PgUp/PgDn` | Diff | Scroll the diff |
 | `j/k` `Enter` `a` `d` `Esc` | Root switcher | Navigate / switch / add / delete root / close |
@@ -128,7 +121,7 @@ Each file in the tree carries a sync-state icon followed by a git-state icon (th
 | `✓` | ✅ | `[=]` | Synced |
 | `↑` | ⬆️ | `[^]` | Local newer (push to update) |
 | `↓` | ⬇️ | `[v]` | Remote newer (pull to update) |
-| `!` | ❗ | `[!]` | Conflict — both diverged |
+| `!` | ❗ | `[!]` | Conflict: both diverged |
 | `·` | ⚪ | `[ ]` | Not yet mapped to a gist |
 
 ### Hydration
@@ -137,22 +130,22 @@ Press `H` to match your existing gists to local files. Three phases:
 
 1. List all your gists (paginated, with retry/backoff and rate-limit handling).
 2. Auto-map files with a unique filename match, fetching each gist's content so the recorded remote hash is real (a divergent remote hydrates as a conflict, not a fake "synced").
-3. For files where multiple gists share the same filename and no content match exists, the **ambiguous resolver** prompts you to pick one (or skip).
+3. For files where multiple gists share the same filename and no content match exists, the ambiguous resolver prompts you to pick one (or skip).
 
 Hydration runs in the background; concurrent push/pull is preserved (results merge rather than reload-from-disk).
 
-**Incremental.** After a root's first full walk, the store records a per-root `last_hydrated` timestamp. Subsequent runs pass it as GitHub's `since=` filter, so `H` fetches only gists changed since the last walk instead of re-listing your whole account — fast even with hundreds of gists. The cursor advances on every successful run, and is kept per-root (each root does its own first full walk, since a gist that doesn't match one root's files may match another's).
+**Incremental.** After a root's first full walk, the store records a per-root `last_hydrated` timestamp. Subsequent runs pass it as GitHub's `since=` filter, so `H` fetches only gists changed since the last walk instead of re-listing your whole account. The cursor advances on every successful run, and is kept per-root.
 
 ### Manual linking
 
-Hydration only auto-pairs a local file with a gist when their filenames match. For a gist created elsewhere (the web UI, a phone) whose filename differs — or that you simply want to attach by hand — select the file and press `L`, then paste the gist URL (`https://gist.github.com/<user>/<id>`) or the bare ID. The gist is fetched, reconciled against the local content, and recorded; the tree then shows whether the two are in sync or have diverged (use `D` to diff, `u`/`d` to reconcile). A multi-file gist must share a filename with the local file (otherwise the pairing is ambiguous and is refused).
+Hydration only auto-pairs a local file with a gist when their filenames match. For a gist created elsewhere whose filename differs, or that you want to attach by hand, select the file and press `L`, then paste the gist URL (`https://gist.github.com/<user>/<id>`) or the bare ID. The gist is fetched, reconciled against the local content, and recorded; the tree then shows whether the two are in sync or have diverged (use `D` to diff, `u`/`d` to reconcile). A multi-file gist must share a filename with the local file (otherwise the pairing is ambiguous and is refused).
 
 ## Architecture
 
 Two-crate Cargo workspace:
 
-- **`crates/gist-rs`** — Standalone GitHub Gist client. Auth via `$GITHUB_TOKEN` or `gh auth token`. Idempotent GET retries with exponential backoff and `Retry-After` / `X-RateLimit-Reset` handling. Pagination via `Link` headers.
-- **`crates/wm`** — The TUI. Modes for normal navigation, search, diff, confirm, hydration progress, ambiguous-match resolution, root switcher, setup, and Google Doc import. State persistence via atomic temp-file + rename.
+- **`crates/gist-rs`**: standalone GitHub Gist client. Auth via `$GITHUB_TOKEN` or `gh auth token`. Idempotent GET retries with exponential backoff and `Retry-After` / `X-RateLimit-Reset` handling. Pagination via `Link` headers.
+- **`crates/penknife`**: the TUI. Modes for normal navigation, search, diff, confirm, hydration progress, ambiguous-match resolution, root switcher, setup, and Google Doc import. State persistence via atomic temp-file + rename.
 
 ## Development
 
@@ -163,7 +156,9 @@ cargo clippy          # lint
 cargo fmt             # format (always run before committing)
 ```
 
-The store format is versioned; `Store::load` will migrate v1 → v2 in place on first launch and persist the new format.
+The store format is versioned; `Store::load` migrates older formats in place on first launch.
+
+House style: em dashes are a CI error, in code and prose alike. Use a comma, colon, or parenthetical instead.
 
 ## License
 
