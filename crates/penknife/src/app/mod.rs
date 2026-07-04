@@ -352,7 +352,7 @@ impl App {
             ))
         };
 
-        let token = gist_rs::auth::resolve_token().ok();
+        let token = penknife_gist::auth::resolve_token().ok();
 
         let start_mode = if config.roots.is_empty() {
             Mode::SetupRoot

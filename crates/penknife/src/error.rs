@@ -9,7 +9,7 @@ pub enum PkError {
     Json(#[from] serde_json::Error),
 
     #[error("Gist error: {0}")]
-    Gist(#[from] gist_rs::GistError),
+    Gist(#[from] penknife_gist::GistError),
 
     #[error("{0}")]
     Other(String),

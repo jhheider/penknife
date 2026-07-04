@@ -362,7 +362,7 @@ impl App {
         self.mode = Mode::Normal; // switches to the save-as prompt on result
 
         self.spawn_tracked(async move {
-            let client = gist_rs::GistClient::new(token);
+            let client = penknife_gist::GistClient::new(token);
             let result = async {
                 let gist = client.get(&id).await.map_err(|e| e.to_string())?;
                 if gist.files.len() != 1 {
@@ -438,7 +438,7 @@ impl App {
         self.status_message = format!("Pushing {rel}...");
 
         self.spawn_tracked(async move {
-            let client = gist_rs::GistClient::new(token);
+            let client = penknife_gist::GistClient::new(token);
             let result =
                 sync::push(&client, store_snapshot.as_ref(), &filename, &content, force).await;
             let event = match result {
@@ -526,7 +526,7 @@ impl App {
         self.status_message = format!("Pulling {rel}...");
 
         self.spawn_tracked(async move {
-            let client = gist_rs::GistClient::new(token);
+            let client = penknife_gist::GistClient::new(token);
             let result = sync::pull(&client, &entry, &filename).await;
             let _ = tx.send(AsyncEvent::PullDone {
                 root: root_clone,
@@ -640,7 +640,7 @@ impl App {
         let tx = self.async_tx.clone();
         self.status_message = format!("Deleting gist for {rel_path}...");
         self.spawn_tracked(async move {
-            let client = gist_rs::GistClient::new(token);
+            let client = penknife_gist::GistClient::new(token);
             let result = client.delete(&remote_id).await.map_err(|e| e.to_string());
             let _ = tx.send(AsyncEvent::DeleteDone {
                 root,
@@ -718,7 +718,7 @@ impl App {
         self.status_message = "Fetching remote for diff...".into();
 
         self.spawn_tracked(async move {
-            let client = gist_rs::GistClient::new(token);
+            let client = penknife_gist::GistClient::new(token);
             let result = sync::full_status(&client, &local_for_task, &entry, &filename).await;
             let _ = tx.send(AsyncEvent::StatusCheck {
                 root,
@@ -761,7 +761,7 @@ impl App {
         self.remote_check_inflight = true;
 
         self.spawn_tracked(async move {
-            let client = gist_rs::GistClient::new(token);
+            let client = penknife_gist::GistClient::new(token);
             let result = crate::remote::check_remote(&client, &entries, |_, _| {}).await;
             let _ = tx.send(AsyncEvent::RemoteCheckDone {
                 root,
@@ -796,7 +796,7 @@ impl App {
         }
 
         self.spawn_tracked(async move {
-            let client = gist_rs::GistClient::new(token);
+            let client = penknife_gist::GistClient::new(token);
             let tx2 = tx.clone();
             let result = crate::hydrate::hydrate(
                 &client,
@@ -861,7 +861,7 @@ impl App {
             let tx = self.async_tx.clone();
             let rel_clone = rel.clone();
             self.spawn_tracked(async move {
-                let client = gist_rs::GistClient::new(token);
+                let client = penknife_gist::GistClient::new(token);
                 let result = sync::full_status(&client, &local_content, &entry, &filename).await;
                 let _ = tx.send(AsyncEvent::StatusCheck {
                     root,
@@ -906,7 +906,7 @@ impl App {
         let tx = self.async_tx.clone();
         self.status_message = format!("Linking {rel_path} → gist {remote_id}...");
         self.spawn_tracked(async move {
-            let client = gist_rs::GistClient::new(token);
+            let client = penknife_gist::GistClient::new(token);
             let result = build_link_entry(&client, &remote_id, &filename, &local_content).await;
             let _ = tx.send(AsyncEvent::LinkDone {
                 root,
@@ -922,7 +922,7 @@ impl App {
 /// both the local and the *observed* remote hash so the resulting status is
 /// honest (Synced only when they truly match).
 async fn build_link_entry(
-    client: &gist_rs::GistClient,
+    client: &penknife_gist::GistClient,
     remote_id: &str,
     local_filename: &str,
     local_content: &str,

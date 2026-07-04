@@ -159,7 +159,7 @@ Hydration only auto-pairs a local file with a gist when their filenames match. F
 Three-crate Cargo workspace:
 
 - **`crates/penknife-backend`**: the backend contract (create/read/update/delete plus an optional changed-since feed). Each backend declares itself *sync* (lossless round-trip, pull is safe) or *publish* (lossy up-render, push-only). One trait, many services.
-- **`crates/gist-rs`**: standalone GitHub Gist client and the founding `Backend` implementation. Auth via `$GITHUB_TOKEN` or `gh auth token`. Idempotent GET retries with exponential backoff and `Retry-After` / `X-RateLimit-Reset` handling. Pagination via `Link` headers.
+- **`crates/penknife-gist`**: standalone GitHub Gist client and the founding `Backend` implementation. Auth via `$GITHUB_TOKEN` or `gh auth token`. Idempotent GET retries with exponential backoff and `Retry-After` / `X-RateLimit-Reset` handling. Pagination via `Link` headers.
 - **`crates/penknife`**: the TUI. Modes for normal navigation, search, diff, confirm, ambiguous-match resolution, root switcher, setup, and URL import. State persistence via atomic temp-file + rename. The store (v3) maps each file to a *list* of published copies, one per backend, so a single essay can be simultaneously current as a gist and (soon) a Google Doc.
 
 ## Development

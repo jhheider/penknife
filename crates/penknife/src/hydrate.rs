@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use gist_rs::{Gist, GistClient};
+use penknife_gist::{Gist, GistClient};
 
 use crate::error::Result;
 use crate::scanner::ScannedFile;

@@ -10,7 +10,7 @@ keywords = ["tui", "markdown", "gist", "notes", "sync"]
 categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
-gist-rs = { path = "../gist-rs" }
+penknife-gist = { path = "../penknife-gist" }
 ratatui = "0.30"
 crossterm = "0.29"
 tui-tree-widget = "0.24"

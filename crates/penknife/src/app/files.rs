@@ -163,7 +163,7 @@ impl App {
                 self.status_message = "Renamed locally; updating remote gist...".to_string();
                 let remote_id = entry.remote_id.clone();
                 self.spawn_tracked(async move {
-                    let client = gist_rs::GistClient::new(token);
+                    let client = penknife_gist::GistClient::new(token);
                     let result = client
                         .rename_file(&remote_id, &old_base, &new_base)
                         .await

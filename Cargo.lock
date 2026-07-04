@@ -975,21 +975,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
-name = "gist-rs"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "penknife-backend",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "wiremock",
-]
-
-[[package]]
 name = "globset"
 version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1968,12 +1953,12 @@ dependencies = [
  "color-eyre",
  "crossterm",
  "dirs",
- "gist-rs",
  "globset",
  "hex",
  "htmd",
  "nucleo-matcher",
  "open",
+ "penknife-gist",
  "ratatui",
  "reqwest",
  "serde",
@@ -1997,6 +1982,21 @@ dependencies = [
  "async-trait",
  "chrono",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "penknife-gist"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "penknife-backend",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]

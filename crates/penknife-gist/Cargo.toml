@@ -1,5 +1,5 @@
 [package]
-name = "gist-rs"
+name = "penknife-gist"
 description = "GitHub Gist API client with retry, rate-limit, and pagination handling"
 version.workspace = true
 edition.workspace = true

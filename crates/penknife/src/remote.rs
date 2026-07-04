@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, Utc};
-use gist_rs::GistClient;
+use penknife_gist::GistClient;
 
 use crate::error::Result;
 use crate::store::FileEntry;
@@ -40,7 +40,8 @@ pub async fn check_remote(
     mut progress_cb: impl FnMut(usize, usize),
 ) -> Result<RemoteCheckOutcome> {
     let gists = client.list_all().await?;
-    let by_id: HashMap<&str, &gist_rs::Gist> = gists.iter().map(|g| (g.id.as_str(), g)).collect();
+    let by_id: HashMap<&str, &penknife_gist::Gist> =
+        gists.iter().map(|g| (g.id.as_str(), g)).collect();
 
     let total = entries.len();
     let mut updated = Vec::new();

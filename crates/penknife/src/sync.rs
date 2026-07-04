@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
 use chrono::Utc;
-use gist_rs::GistClient;
+use penknife_gist::GistClient;
 use ratatui::style::Color;
 
 use crate::error::Result;
@@ -288,7 +288,7 @@ mod tests {
             .mount(&server)
             .await;
         // No PATCH mock: a push attempt would 404 and fail the test.
-        let client = gist_rs::GistClient::with_base_url("t".into(), server.uri());
+        let client = penknife_gist::GistClient::with_base_url("t".into(), server.uri());
         let mut stored = entry(&sha256_hex("v1"), &sha256_hex("v1"));
         stored.remote_id = "g1".into();
 
@@ -318,7 +318,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let client = gist_rs::GistClient::with_base_url("t".into(), server.uri());
+        let client = penknife_gist::GistClient::with_base_url("t".into(), server.uri());
         let mut stored = entry(&sha256_hex("v1"), &sha256_hex("v1"));
         stored.remote_id = "g1".into();
 
@@ -346,7 +346,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let client = gist_rs::GistClient::with_base_url("t".into(), server.uri());
+        let client = penknife_gist::GistClient::with_base_url("t".into(), server.uri());
         let mut stored = entry(&sha256_hex("v1"), "remote-hash-we-know-diverged");
         stored.remote_id = "g1".into();
 
@@ -386,7 +386,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string("the full content"))
             .mount(&server)
             .await;
-        let client = gist_rs::GistClient::with_base_url("t".into(), server.uri());
+        let client = penknife_gist::GistClient::with_base_url("t".into(), server.uri());
         let mut stored = entry("x", "y");
         stored.remote_id = "g1".into();
 
