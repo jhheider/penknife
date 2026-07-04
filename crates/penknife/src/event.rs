@@ -49,7 +49,6 @@ pub enum AsyncEvent {
         remote_updated_at: chrono::DateTime<chrono::Utc>,
     },
     /// Progress for a bulk remote check (`f`).
-    RemoteCheckProgress { done: usize, total: usize },
     /// Bulk remote check finished. `started` timestamps the check so stale
     /// results don't clobber entries that synced while it ran.
     RemoteCheckDone {

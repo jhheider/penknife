@@ -24,10 +24,12 @@ use ratatui::text::Span;
 use tokio::task::JoinHandle;
 use tui_tree_widget::TreeState;
 
+use std::time::{Duration, Instant};
+
 use crate::config::Config;
 use crate::error::Result;
 use crate::event::AsyncSender;
-use crate::hydrate::{AmbiguousMatch, HydrationProgress};
+use crate::hydrate::AmbiguousMatch;
 use crate::scanner::{self, ScannedFile};
 use crate::store::Store;
 use crate::sync;
@@ -50,10 +52,6 @@ pub enum Mode {
     },
     GdocUrl,
     GdocFilename,
-    Hydrating {
-        progress: Option<HydrationProgress>,
-        done: bool,
-    },
     Message(String),
     RootSwitcher {
         selected: usize,
@@ -226,6 +224,19 @@ pub struct App {
     /// reuse one pass instead of each doing their own ~N reads per call.
     /// Keyed by rel_path. Files not in this map are treated as `NotGisted`.
     pub status_cache: std::collections::HashMap<String, sync::SyncStatus>,
+    /// When the last background remote check *completed* (measured from
+    /// completion, not start, so a slow check never overlaps the next).
+    /// None = never; the first tick fires immediately.
+    pub last_remote_poll: Option<Instant>,
+    /// True while a remote check is in flight; prevents stacking.
+    pub remote_check_inflight: bool,
+    /// Consecutive remote-check failures. Each failure doubles the effective
+    /// poll interval (capped), so an offline session doesn't spam errors.
+    pub remote_poll_failures: u32,
+    /// When the last local filesystem sweep ran.
+    pub last_local_sweep: Option<Instant>,
+    /// One-shot: incremental hydration fires on the first tick.
+    pub startup_hydrate_done: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,12 +245,28 @@ pub enum PaneFocus {
     Right,
 }
 
+/// Whether two scan results disagree on membership or mtimes. Drives the
+/// local sweep's "did anything change outside the TUI" decision without
+/// hashing content. Order-independent: `self.files` is kept sorted by the
+/// active sort mode, while a fresh scan comes back in walk order.
+fn files_differ(current: &[ScannedFile], scanned: &[ScannedFile]) -> bool {
+    if current.len() != scanned.len() {
+        return true;
+    }
+    let key = |f: &ScannedFile| (f.rel_path.clone(), f.modified);
+    let mut a: Vec<_> = current.iter().map(key).collect();
+    let mut b: Vec<_> = scanned.iter().map(key).collect();
+    a.sort();
+    b.sort();
+    a != b
+}
+
 /// Single-character keys reserved by the TUI's built-in bindings. User
 /// aliases cannot shadow these - conflicting entries are dropped at load
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', '_',
-    'H', 'r', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')', 'f', 'L',
+    'M', 'R', 'I', 's', 'm', '=', 'O', 'B', 'g', 'G', '(', ')', 'L',
 ];
 
 impl App {
@@ -328,6 +355,13 @@ impl App {
             git_repo_root: None,
             git_statuses: std::collections::HashMap::new(),
             status_cache: std::collections::HashMap::new(),
+            last_remote_poll: None,
+            remote_check_inflight: false,
+            remote_poll_failures: 0,
+            // The constructor just scanned; no point sweeping again for one
+            // interval.
+            last_local_sweep: Some(Instant::now()),
+            startup_hydrate_done: false,
         };
         // Populate the per-file sync-status cache and git status before the
         // first tree build so leaf glyphs reflect the loaded store right away.
@@ -341,10 +375,66 @@ impl App {
         if let Some(w) = alias_warning {
             app.status_message = w;
         }
-        if app.config.check_on_startup && app.token.is_some() && !app.files.is_empty() {
-            app.start_remote_check();
-        }
         Ok(app)
+    }
+
+    /// Periodic work, called once per main-loop iteration (roughly every
+    /// 50ms). Owns all background cadence: the local filesystem sweep, the
+    /// remote poll, and the one-shot startup hydration. Only runs in Normal
+    /// mode so modal state (diff, resolver, dialogs) is never yanked out
+    /// from under the user.
+    pub fn tick(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+
+        // Local sweep: rescan and refresh only when something changed on
+        // disk, so the common no-op case costs one directory walk and zero
+        // hashing.
+        let local_secs = self.config.poll.local_secs;
+        if local_secs > 0
+            && self
+                .last_local_sweep
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(local_secs))
+        {
+            self.last_local_sweep = Some(Instant::now());
+            if let Some(entry) = self.current_root_entry()
+                && entry.path.exists()
+            {
+                let ignore = scanner::build_globset(&entry.ignore);
+                if let Ok(scanned) = scanner::scan_directory(&entry.path, &ignore)
+                    && files_differ(&self.files, &scanned)
+                    && let Err(e) = self.refresh_files()
+                {
+                    self.status_message = format!("Refresh error: {e}");
+                }
+            }
+        }
+
+        // One-shot incremental hydration: pick up gists created or changed
+        // since the last walk (or do the first full walk on a new root).
+        if !self.startup_hydrate_done {
+            self.startup_hydrate_done = true;
+            if self.token.is_some() && !self.files.is_empty() {
+                self.start_hydration();
+            }
+        }
+
+        // Remote poll: exponential backoff on consecutive failures, capped
+        // at 64x the configured interval.
+        let remote_secs = self.config.poll.remote_secs;
+        if remote_secs > 0 && self.token.is_some() && !self.remote_check_inflight {
+            let effective = remote_secs * (1u64 << self.remote_poll_failures.min(6));
+            if self
+                .last_remote_poll
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(effective))
+            {
+                // Stamp even when there's nothing to check, so an unmapped
+                // tree doesn't re-evaluate every tick.
+                self.last_remote_poll = Some(Instant::now());
+                self.start_remote_check();
+            }
+        }
     }
 
     /// Get the path of the current root directory, if any.
@@ -445,5 +535,38 @@ mod tests {
         assert_eq!(expand_tilde("~/Documents"), home.join("Documents"));
         // Bare ~ also expands to home.
         assert_eq!(expand_tilde("~"), home);
+    }
+
+    fn scanned(rel: &str, secs: u64) -> ScannedFile {
+        ScannedFile {
+            rel_path: rel.to_string(),
+            abs_path: PathBuf::from(format!("/x/{rel}")),
+            modified: std::time::UNIX_EPOCH + Duration::from_secs(secs),
+        }
+    }
+
+    #[test]
+    fn files_differ_ignores_order() {
+        let a = vec![scanned("a.md", 1), scanned("b.md", 2)];
+        let b = vec![scanned("b.md", 2), scanned("a.md", 1)];
+        assert!(!files_differ(&a, &b));
+    }
+
+    #[test]
+    fn files_differ_detects_mtime_change() {
+        let a = vec![scanned("a.md", 1)];
+        let b = vec![scanned("a.md", 9)];
+        assert!(files_differ(&a, &b));
+    }
+
+    #[test]
+    fn files_differ_detects_membership_change() {
+        let a = vec![scanned("a.md", 1)];
+        let b = vec![scanned("a.md", 1), scanned("new.md", 2)];
+        assert!(files_differ(&a, &b));
+        assert!(files_differ(&b, &a));
+        // Same length, different file.
+        let c = vec![scanned("other.md", 1)];
+        assert!(files_differ(&a, &c));
     }
 }

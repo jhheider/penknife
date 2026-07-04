@@ -1,9 +1,8 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use unicode_width::UnicodeWidthChar;
 
 use crate::app::App;
-use crate::hydrate::HydrationProgress;
 use crate::ui::input::LineEditor;
 
 /// Render a centered modal overlay sized as a percentage of the screen.
@@ -86,8 +85,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("X", "Delete remote gist (keeps local file)"),
                 ("_", "Move local file to system trash (with confirm)"),
                 ("D", "Diff local vs remote"),
-                ("f", "Check remote for changes (updates status icons)"),
-                ("H", "Hydrate - match existing gists to files (incremental)"),
+                ("M", "Resolve ambiguous hydration matches"),
                 ("L", "Link selected file to an existing gist by URL/ID"),
             ],
         ),
@@ -119,7 +117,6 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("s", "Find & replace (recursive within current scope)"),
                 ("I", "Import a Google Doc as markdown"),
                 ("R", "Switch root directory"),
-                ("r", "Refresh file tree"),
                 ("?", "This help"),
                 ("q", "Quit"),
             ],
@@ -369,81 +366,6 @@ pub fn render_input_dialog(
         .block(block)
         .wrap(Wrap { trim: false });
     f.render_widget(para, modal);
-}
-
-/// Render hydration progress with a gauge bar.
-pub fn render_hydration_progress(f: &mut Frame, area: Rect, progress: &HydrationProgress) {
-    // 3 text rows + spacer + gauge + 2 border rows.
-    let modal = centered(area, 64.min(area.width.saturating_sub(4)), 7);
-    f.render_widget(Clear, modal);
-
-    let g = crate::glyphs::glyphs();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!("{} Hydration", g.hydrating))
-        .border_style(Style::default().fg(Color::Yellow))
-        .title_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
-
-    // Split modal into text area and gauge
-    let inner = block.inner(modal);
-    f.render_widget(block, modal);
-
-    let chunks = Layout::vertical([
-        Constraint::Min(3),
-        Constraint::Length(1), // spacer
-        Constraint::Length(1), // gauge
-    ])
-    .split(inner);
-
-    let bold = Modifier::BOLD;
-    let yellow_bold = Style::default().fg(Color::Yellow).add_modifier(bold);
-    let dim = Style::default().fg(Color::DarkGray);
-    let lines = vec![
-        Line::styled(progress.phase.clone(), yellow_bold),
-        Line::raw(""),
-        Line::from(vec![
-            Span::styled("Matched: ", dim),
-            Span::styled(
-                progress.matched.to_string(),
-                Style::default().fg(Color::Green).add_modifier(bold),
-            ),
-            Span::styled("   Total gists: ", dim),
-            Span::styled(
-                progress.total_gists.to_string(),
-                Style::default().fg(Color::Cyan).add_modifier(bold),
-            ),
-            Span::styled("   Ambiguous: ", dim),
-            Span::styled(
-                progress.ambiguous.len().to_string(),
-                Style::default()
-                    .fg(if progress.ambiguous.is_empty() {
-                        Color::DarkGray
-                    } else {
-                        Color::Yellow
-                    })
-                    .add_modifier(bold),
-            ),
-        ]),
-    ];
-    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
-    f.render_widget(para, chunks[0]);
-
-    // Gauge: use current_file / total_files if available
-    let ratio = if progress.total_files > 0 {
-        (progress.current_file as f64 / progress.total_files as f64).min(1.0)
-    } else if progress.total_gists > 0 {
-        (progress.matched as f64 / progress.total_gists as f64).min(1.0)
-    } else {
-        0.0
-    };
-    let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(Color::Yellow).bg(Color::DarkGray))
-        .ratio(ratio);
-    f.render_widget(gauge, chunks[2]);
 }
 
 /// Render a confirmation dialog.

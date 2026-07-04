@@ -208,11 +208,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 &app.input_editor,
             );
         }
-        Mode::Hydrating {
-            progress: Some(p), ..
-        } => {
-            dialogs::render_hydration_progress(f, f.area(), p);
-        }
         Mode::Message(msg) => {
             dialogs::render_message(f, f.area(), msg);
         }

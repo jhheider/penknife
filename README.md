@@ -10,11 +10,11 @@ Where it fits: your editor is where you write. A git remote or sync service is h
 
 - Tree-based browser for one or more local writing directories, arbitrarily nested. Supports `.md` and `.json` (with pretty-printed, syntax-highlighted JSON preview)
 - Push, pull, and delete against gists, with per-file sync status and at-a-glance counts in the status bar. Pushes refuse to overwrite a remote that changed since the last sync (with a force option after review)
-- Remote check (`f`): one cheap API listing detects gists edited on the web or another machine, lighting up the behind/conflict icons without pulling anything
+- Background polling: a cheap remote check every few minutes detects gists edited on the web or another machine, and a local sweep picks up files created, edited, or deleted outside the TUI. Icons and counts stay honest without any manual refresh; failures back off exponentially so offline sessions don't nag
 - Diff view of local vs remote
 - Open gist in browser (`o`) and copy gist URL (`c`) for quick sharing
 - Jump to next/previous dirty file (`n` / `N`) for triage
-- Hydration: match existing gists to local files by filename and content hash, with an interactive resolver for ambiguous cases
+- Hydration: existing gists are matched to local files by filename and content hash automatically at startup, with an interactive resolver (`M`) for ambiguous cases
 - Multi-root: switch between several configured directories from inside the app
 - Fuzzy file picker (`/`): fzf-style modal with smartcase matching and inline highlights, powered by [nucleo](https://crates.io/crates/nucleo-matcher)
 - Find and replace (`s`): recursive substring search within the current scope, per-match review checklist with line context, drift detection on apply
@@ -95,12 +95,10 @@ Tokens are **not** persisted by this tool; they're resolved fresh on each launch
 | `=` | Normal | Toggle JSON between compact and pretty form in place |
 | `X` | Normal | Delete remote gist (with confirmation; keeps local file) |
 | `_` | Normal | Move local file to the system trash (with confirmation) |
-| `f` | Normal | Check remote for changes (updates icons and counts) |
-| `H` | Normal | Hydrate: match existing gists to files (incremental; see below) |
+| `M` | Normal | Resolve ambiguous hydration matches (see below) |
 | `L` | Normal | Link the selected file to an existing gist by URL or ID |
 | `I` | Normal | Import a Google Doc as markdown |
 | `R` | Normal | Switch root directory |
-| `r` | Normal | Refresh the tree |
 | `q` | Normal | Quit |
 | `j/k` `↑/↓` `PgUp/PgDn` | Diff | Scroll the diff |
 | `j/k` `Enter` `a` `d` `Esc` | Root switcher | Navigate / switch / add / delete root / close |
@@ -124,17 +122,32 @@ Each file in the tree carries a sync-state icon followed by a git-state icon (th
 | `!` | ❗ | `[!]` | Conflict: both diverged |
 | `·` | ⚪ | `[ ]` | Not yet mapped to a gist |
 
+### Polling
+
+The tree keeps itself current; there are no refresh keys.
+
+- **Remote** (default: every 5 minutes): one cheap API listing per check detects gists edited elsewhere and lights up the behind/conflict icons without pulling anything. Consecutive failures double the effective interval (capped at 64x), so an offline session stays quiet.
+- **Local** (default: every 5 seconds): a filesystem sweep re-stats the tree and refreshes it only when membership or mtimes actually changed. Zero hashing in the steady state.
+
+Tune or disable either in `config.toml` (`0` disables):
+
+```toml
+[poll]
+remote_secs = 300
+local_secs = 5
+```
+
 ### Hydration
 
-Press `H` to match your existing gists to local files. Three phases:
+At startup, penknife matches your existing gists to local files automatically. Three phases:
 
-1. List all your gists (paginated, with retry/backoff and rate-limit handling).
+1. List your gists (paginated, with retry/backoff and rate-limit handling).
 2. Auto-map files with a unique filename match, fetching each gist's content so the recorded remote hash is real (a divergent remote hydrates as a conflict, not a fake "synced").
-3. For files where multiple gists share the same filename and no content match exists, the ambiguous resolver prompts you to pick one (or skip).
+3. For files where multiple gists share the same filename and no content match exists, the status bar reports the count; press `M` to open the resolver and pick one (or skip).
 
 Hydration runs in the background; concurrent push/pull is preserved (results merge rather than reload-from-disk).
 
-**Incremental.** After a root's first full walk, the store records a per-root `last_hydrated` timestamp. Subsequent runs pass it as GitHub's `since=` filter, so `H` fetches only gists changed since the last walk instead of re-listing your whole account. The cursor advances on every successful run, and is kept per-root.
+**Incremental.** After a root's first full walk, the store records a per-root `last_hydrated` timestamp. Subsequent runs pass it as GitHub's `since=` filter, fetching only gists changed since the last walk instead of re-listing your whole account. The cursor advances on every successful run, and is kept per-root.
 
 ### Manual linking
 

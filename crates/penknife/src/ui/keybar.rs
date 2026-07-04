@@ -18,7 +18,6 @@ pub fn hints(mode: &Mode, focused_pane: PaneFocus) -> Vec<Hint> {
                 ("u", "push"),
                 ("d", "pull"),
                 ("D", "diff"),
-                ("f", "fetch"),
                 ("e", "edit"),
                 ("/", "find"),
                 ("B", "bulk"),
@@ -57,13 +56,6 @@ pub fn hints(mode: &Mode, focused_pane: PaneFocus) -> Vec<Hint> {
             ("Enter", "apply"),
             ("Esc", "cancel"),
         ],
-        Mode::Hydrating { done, .. } => {
-            if *done {
-                vec![("any key", "continue")]
-            } else {
-                vec![("", "hydrating…")]
-            }
-        }
         Mode::RootSwitcher { .. } => vec![
             ("Enter", "switch"),
             ("a", "add"),
@@ -139,14 +131,6 @@ mod tests {
             Mode::FilePicker { selected: 0 },
             Mode::GdocUrl,
             Mode::GdocFilename,
-            Mode::Hydrating {
-                progress: None,
-                done: false,
-            },
-            Mode::Hydrating {
-                progress: None,
-                done: true,
-            },
             Mode::RootSwitcher { selected: 0 },
             Mode::AddRoot,
             Mode::SetupRoot,

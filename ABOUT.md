@@ -23,7 +23,7 @@ penknife treats each published copy like a git remote: it records what was pushe
 
 Ordered by intent, not by promise:
 
-1. **Polling and file watching.** Remote poll on a timer, local watcher, auto-hydrate. The manual check/refresh/hydrate keys retire when their jobs become automatic.
+1. ~~**Polling.**~~ Done: remote poll on a timer, local filesystem sweep, auto-hydrate at startup. The manual check/refresh/hydrate keys retired when their jobs became automatic.
 2. **Backend trait.** The gist client becomes the first implementation of a small backend contract (authenticate, create, read, update, delete, list-changed-since). Each backend declares itself *sync* (lossless round-trip, pull is safe) or *publish* (lossy up-render, push-only).
 3. **One file, many remotes.** The store maps a file to a list of published copies, so one essay can be simultaneously current as a gist and a Google Doc.
 4. **Google Docs publish.** Push markdown up via the Drive API's conversion path; re-push replaces the doc. Publish-only: bidirectional sync with a lossy format is a conflict factory.

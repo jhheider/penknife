@@ -17,7 +17,6 @@ impl App {
             Mode::GdocUrl => self.handle_gdoc_url_key(key),
             Mode::GdocFilename => self.handle_gdoc_filename_key(key),
             Mode::Confirm { .. } => self.handle_confirm_key(key),
-            Mode::Hydrating { .. } => self.handle_hydrating_key(),
             Mode::Diff { .. } => self.handle_diff_key(key),
             Mode::ResolveAmbiguous { .. } => self.handle_resolve_ambiguous_key(key),
             Mode::RootSwitcher { .. } => self.handle_root_switcher_key(key),
@@ -102,15 +101,14 @@ impl App {
             KeyCode::Char(')') => self.confirm_git_push(),
             KeyCode::Char('=') => self.do_format_in_place(),
             KeyCode::Char('s') => self.start_replace(),
-            KeyCode::Char('H') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.start_hydration();
-            }
-            KeyCode::Char('f') => self.start_remote_check(),
-            KeyCode::Char('r') => {
-                if let Err(e) = self.refresh_files() {
-                    self.status_message = format!("Refresh error: {e}");
+            KeyCode::Char('M') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.pending_ambiguous.is_empty() {
+                    self.status_message = "No ambiguous matches to resolve.".into();
                 } else {
-                    self.status_message = "Refreshed.".into();
+                    self.mode = Mode::ResolveAmbiguous {
+                        item: 0,
+                        selected: 0,
+                    };
                 }
             }
             KeyCode::Char('R') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -273,27 +271,6 @@ impl App {
             }
         }
         self.mode = Mode::Normal;
-    }
-
-    fn handle_hydrating_key(&mut self) {
-        let Mode::Hydrating { done, .. } = &self.mode else {
-            return;
-        };
-        if !*done {
-            return;
-        }
-        if let Err(e) = self.refresh_files() {
-            self.status_message = format!("Refresh error: {e}");
-        }
-        self.update_status();
-        if !self.pending_ambiguous.is_empty() {
-            self.mode = Mode::ResolveAmbiguous {
-                item: 0,
-                selected: 0,
-            };
-        } else {
-            self.mode = Mode::Normal;
-        }
     }
 
     fn handle_resolve_ambiguous_key(&mut self, key: KeyEvent) {

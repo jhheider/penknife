@@ -73,6 +73,10 @@ async fn main() -> color_eyre::Result<()> {
             app.handle_async_event(event);
         }
 
+        // Background cadence: the local filesystem sweep, remote poll, and
+        // one-shot startup hydration all pace themselves off this call.
+        app.tick();
+
         if let Some(path) = app.pending_editor.take() {
             suspend_and_edit(&mut terminal, &mut app, &path)?;
         }

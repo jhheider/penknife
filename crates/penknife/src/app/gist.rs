@@ -114,53 +114,70 @@ impl App {
                 };
                 self.status_message = format!("Push blocked: remote changed for {rel_path}");
             }
-            AsyncEvent::RemoteCheckProgress { done, total } => {
-                self.status_message = format!("Checking remote... {done}/{total}");
-            }
             AsyncEvent::RemoteCheckDone {
                 root,
                 started,
                 result,
-            } => match result {
-                Ok(outcome) => {
-                    let applied = sync_apply::apply_remote_updates(
-                        &mut self.store,
-                        &root,
-                        started,
-                        outcome.updated,
-                    );
-                    for rel in &applied {
-                        self.refresh_status_for(rel);
+            } => {
+                self.remote_check_inflight = false;
+                self.last_remote_poll = Some(std::time::Instant::now());
+                match result {
+                    Ok(outcome) => {
+                        self.remote_poll_failures = 0;
+                        let applied = sync_apply::apply_remote_updates(
+                            &mut self.store,
+                            &root,
+                            started,
+                            outcome.updated,
+                        );
+                        for rel in &applied {
+                            self.refresh_status_for(rel);
+                        }
+                        if !applied.is_empty()
+                            && let Err(e) = self.store.save()
+                        {
+                            self.status_message = format!("Remote check: store save failed: {e}");
+                            return;
+                        }
+                        self.rebuild_tree();
+                        self.update_status();
+                        // Quiet when nothing moved; the icons and counts are
+                        // the steady-state signal.
+                        if outcome.divergent > 0 || !outcome.missing.is_empty() {
+                            let mut msg = format!(
+                                "Remote: {} of {} changed",
+                                outcome.divergent, outcome.checked
+                            );
+                            if !outcome.missing.is_empty() {
+                                msg.push_str(&format!(
+                                    ", {} deleted ({})",
+                                    outcome.missing.len(),
+                                    outcome.missing.join(", ")
+                                ));
+                            }
+                            self.status_message = msg;
+                        }
                     }
-                    if !applied.is_empty()
-                        && let Err(e) = self.store.save()
-                    {
-                        self.status_message = format!("Remote check: store save failed: {e}");
-                        return;
+                    Err(e) => {
+                        self.remote_poll_failures = self.remote_poll_failures.saturating_add(1);
+                        // Report the first failure; repeats just extend the
+                        // backoff silently (offline shouldn't nag).
+                        if self.remote_poll_failures == 1 {
+                            self.status_message = format!("Remote check failed: {e}");
+                        }
                     }
-                    self.rebuild_tree();
-                    self.update_status();
-                    let mut msg = format!(
-                        "Remote check: {} mapped file(s), {} changed remotely",
-                        outcome.checked, outcome.divergent
-                    );
-                    if !outcome.missing.is_empty() {
-                        msg.push_str(&format!(
-                            ", {} gist(s) deleted remotely ({})",
-                            outcome.missing.len(),
-                            outcome.missing.join(", ")
-                        ));
-                    }
-                    self.status_message = msg;
                 }
-                Err(e) => {
-                    self.status_message = format!("Remote check failed: {e}");
-                }
-            },
+            }
             AsyncEvent::HydrationUpdate(progress) => {
-                self.mode = Mode::Hydrating {
-                    progress: Some(progress),
-                    done: false,
+                // Hydration runs in the background; narrate inline. Phase
+                // strings carry their own counts.
+                self.status_message = if progress.matched > 0 {
+                    format!(
+                        "Hydrating: {} ({} matched)",
+                        progress.phase, progress.matched
+                    )
+                } else {
+                    format!("Hydrating: {}", progress.phase)
                 };
             }
             AsyncEvent::HydrationDone(result) => match result {
@@ -174,22 +191,30 @@ impl App {
                     self.store.set_hydrated_cursor(&data.root, data.new_cursor);
                     if let Err(e) = self.store.save() {
                         self.status_message = format!("Hydration ok but save failed: {e}");
+                        return;
                     }
-                    let matched = data.matched;
-                    let ambiguous_count = data.ambiguous.len();
-                    if let Mode::Hydrating { progress, done } = &mut self.mode {
-                        if let Some(p) = progress {
-                            p.phase = format!(
-                                "Complete! Matched {matched} files, {ambiguous_count} ambiguous. Press any key."
-                            );
-                        }
-                        *done = true;
-                    }
-                    // Stash ambiguous matches for the resolver UI (added later).
                     self.pending_ambiguous = data.ambiguous;
+                    if data.matched > 0 {
+                        self.refresh_status_cache();
+                        self.rebuild_tree();
+                        self.update_status();
+                    }
+                    // Quiet unless hydration actually found something to say.
+                    if !self.pending_ambiguous.is_empty() {
+                        self.status_message = format!(
+                            "Hydrated {} file(s); {} ambiguous match(es): press M to resolve",
+                            data.matched,
+                            self.pending_ambiguous.len()
+                        );
+                    } else if data.matched > 0 {
+                        self.status_message = format!("Hydrated {} file(s)", data.matched);
+                    } else if self.status_message.starts_with("Hydrating:") {
+                        self.status_message.clear();
+                        self.update_status();
+                    }
                 }
                 Err(e) => {
-                    self.mode = Mode::Message(format!("Hydration error: {e}"));
+                    self.status_message = format!("Hydration error: {e}");
                 }
             },
             AsyncEvent::StatusCheck {
@@ -575,38 +600,33 @@ impl App {
         };
     }
 
-    /// Kick off a bulk remote check (`f`): list all gists once, fetch content
+    /// Kick off a background remote check: list all gists once, fetch content
     /// for any whose `updated_at` moved since we last looked, and record the
     /// observed remote hashes. This is what makes remote edits show up as
-    /// remote-newer/conflict in the tree without pulling anything.
+    /// remote-newer/conflict in the tree without pulling anything. Driven by
+    /// the poll timer in `tick()`; silent unless something actually changed.
     pub(crate) fn start_remote_check(&mut self) {
+        if self.remote_check_inflight {
+            return;
+        }
         let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
             return;
         };
         let Some(root) = self.active_root_path() else {
-            self.status_message = "No active root.".into();
             return;
         };
         let entries = match self.store.files_for_root(&root) {
             Some(map) if !map.is_empty() => map.clone(),
-            _ => {
-                self.status_message = "No gist-mapped files to check.".into();
-                return;
-            }
+            _ => return,
         };
         let started = chrono::Utc::now();
         let tx = self.async_tx.clone();
 
-        self.status_message = format!("Checking remote for {} mapped file(s)...", entries.len());
+        self.remote_check_inflight = true;
 
         self.spawn_tracked(async move {
             let client = gist_rs::GistClient::new(token);
-            let tx2 = tx.clone();
-            let result = crate::remote::check_remote(&client, &entries, move |done, total| {
-                let _ = tx2.send(AsyncEvent::RemoteCheckProgress { done, total });
-            })
-            .await;
+            let result = crate::remote::check_remote(&client, &entries, |_, _| {}).await;
             let _ = tx.send(AsyncEvent::RemoteCheckDone {
                 root,
                 started,
@@ -625,10 +645,6 @@ impl App {
             return;
         };
 
-        self.mode = Mode::Hydrating {
-            progress: None,
-            done: false,
-        };
         let tx = self.async_tx.clone();
         let files = self.files.clone();
         // Incremental cursor: only walk gists updated since this root's last
