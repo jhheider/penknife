@@ -11,6 +11,10 @@ use crate::error::Result;
 /// `penknife_backend::Backend::name()` for the gist implementation.
 pub const GIST_BACKEND: &str = "gist";
 
+/// Backend name for Google Docs. Matches `penknife_backend::Backend::name()`
+/// for the gdoc implementation.
+pub const GDOC_BACKEND: &str = "gdoc";
+
 /// One published copy of a local file on some backend service. A file may
 /// have several (one per backend); each tracks its own drift independently.
 #[derive(Debug, Clone, Serialize, Deserialize)]

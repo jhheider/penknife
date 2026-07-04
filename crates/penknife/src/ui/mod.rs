@@ -287,6 +287,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Mode::GitMenu { selected } => {
             dialogs::render_git_menu(f, f.area(), *selected);
         }
+        Mode::PublishMenu { selected } => {
+            dialogs::render_publish_menu(f, f.area(), app, *selected);
+        }
+        Mode::GdocAuth {
+            user_code,
+            verification_url,
+        } => {
+            dialogs::render_gdoc_auth(f, f.area(), user_code, verification_url);
+        }
         _ => {}
     }
 }

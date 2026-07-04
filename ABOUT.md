@@ -26,7 +26,7 @@ Ordered by intent, not by promise:
 1. ~~**Polling.**~~ Done: remote poll on a timer, local filesystem sweep, auto-hydrate at startup. The manual check/refresh/hydrate keys retired when their jobs became automatic.
 2. ~~**Backend trait.**~~ Done: `penknife-backend` defines the contract (create, read, update, delete, changed-since) and the gist client is its first implementation. Each backend declares itself *sync* (lossless round-trip, pull is safe) or *publish* (lossy up-render, push-only).
 3. ~~**One file, many remotes.**~~ Done: store v3 maps a file to a list of published copies (older stores migrate automatically), so one essay can be simultaneously current as a gist and a Google Doc.
-4. **Google Docs publish.** Push markdown up via the Drive API's conversion path; re-push replaces the doc. Publish-only: bidirectional sync with a lossy format is a conflict factory.
+4. ~~**Google Docs publish.**~~ Done: the `p` menu pushes markdown up via the Drive API's conversion path with device-flow sign-in; re-publish replaces the doc. Publish-only: bidirectional sync with a lossy format is a conflict factory.
 5. **Notion publish** via its markdown content API, then the long tail (dev.to, GitLab snippets) as demand shows up.
 
 Explicitly declined: Medium (API discontinued), Telegraph, paste services, plugin systems, git porcelain beyond the basics, team merge workflows.

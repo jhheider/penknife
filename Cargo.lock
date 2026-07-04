@@ -1958,6 +1958,7 @@ dependencies = [
  "htmd",
  "nucleo-matcher",
  "open",
+ "penknife-backend",
  "penknife-gdoc",
  "penknife-gist",
  "ratatui",

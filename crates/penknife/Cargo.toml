@@ -10,6 +10,7 @@ keywords = ["tui", "markdown", "gist", "notes", "sync"]
 categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
+penknife-backend = { path = "../penknife-backend" }
 penknife-gist = { path = "../penknife-gist" }
 penknife-gdoc = { path = "../penknife-gdoc" }
 ratatui = "0.30"

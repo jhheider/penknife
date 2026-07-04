@@ -121,15 +121,12 @@ pub struct GdocConfig {
 
 /// Compile-time default OAuth client, injected at release build via
 /// `PENKNIFE_GDOC_DEFAULT_CLIENT_ID` / `..._SECRET`. Empty in dev builds.
-#[allow(dead_code)] // consumed by credentials(), wired up with the publish UI
 const DEFAULT_GDOC_CLIENT_ID: Option<&str> = option_env!("PENKNIFE_GDOC_DEFAULT_CLIENT_ID");
-#[allow(dead_code)] // consumed by credentials(), wired up with the publish UI
 const DEFAULT_GDOC_CLIENT_SECRET: Option<&str> = option_env!("PENKNIFE_GDOC_DEFAULT_CLIENT_SECRET");
 
 impl GdocConfig {
     /// Resolve to usable credentials, or None if no client is configured
     /// anywhere (config, env, compiled default).
-    #[allow(dead_code)] // wired up with the publish UI
     pub fn credentials(&self) -> Option<penknife_gdoc::Credentials> {
         let client_id = self
             .client_id

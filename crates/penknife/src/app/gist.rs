@@ -328,6 +328,89 @@ impl App {
                     self.mode = Mode::Message(format!("Gist import failed: {e}"));
                 }
             },
+            AsyncEvent::GdocAuthPrompt {
+                user_code,
+                verification_url,
+            } => {
+                // Best effort: open the approval page for them too.
+                let _ = open::that(&verification_url);
+                self.mode = Mode::GdocAuth {
+                    user_code,
+                    verification_url,
+                };
+            }
+            AsyncEvent::GdocAuthDone(result) => {
+                self.gdoc_auth_abort = None;
+                if matches!(self.mode, Mode::GdocAuth { .. }) {
+                    self.mode = Mode::Normal;
+                }
+                match result {
+                    Ok(()) => {
+                        // Resume the publish that needed the sign-in.
+                        if let Some(rel) = self.pending_publish.take() {
+                            self.start_gdoc_publish(rel);
+                        } else {
+                            self.status_message = "Google sign-in complete.".into();
+                        }
+                    }
+                    Err(e) => {
+                        self.pending_publish = None;
+                        self.status_message = format!("Google sign-in failed: {e}");
+                    }
+                }
+            }
+            AsyncEvent::GdocPublishDone {
+                root,
+                rel_path,
+                result,
+            } => {
+                self.pending_publish = None;
+                self.gdoc_auth_abort = None;
+                match result {
+                    Ok(data) => {
+                        let copy = crate::store::RemoteCopy {
+                            backend: crate::store::GDOC_BACKEND.into(),
+                            remote_id: data.remote_id,
+                            url: data.url.clone(),
+                            local_sha256: data.content_sha.clone(),
+                            remote_sha256: data.content_sha,
+                            last_synced: chrono::Utc::now(),
+                            remote_updated_at: data.revision,
+                        };
+                        self.store.insert(&root, rel_path.clone(), copy);
+                        if let Err(e) = self.store.save() {
+                            self.status_message = format!("Published; store save failed: {e}");
+                            return;
+                        }
+                        self.status_message = if data.updated {
+                            format!("Updated Google Doc for {rel_path}")
+                        } else {
+                            format!("Published {rel_path} -> {}", data.url)
+                        };
+                    }
+                    Err(e) => {
+                        self.status_message = format!("Publish failed: {e}");
+                    }
+                }
+            }
+            AsyncEvent::GdocUnpublishDone {
+                root,
+                rel_path,
+                result,
+            } => match result {
+                Ok(()) => {
+                    self.store
+                        .remove_backend(&root, &rel_path, crate::store::GDOC_BACKEND);
+                    if let Err(e) = self.store.save() {
+                        self.status_message = format!("Unpublished; store save failed: {e}");
+                        return;
+                    }
+                    self.status_message = format!("Unpublished {rel_path} (Doc deleted)");
+                }
+                Err(e) => {
+                    self.status_message = format!("Unpublish failed: {e}");
+                }
+            },
         }
     }
 
@@ -668,7 +751,7 @@ impl App {
     }
 
     /// Copy a URL to the system clipboard, returning true on success.
-    fn copy_to_clipboard(&mut self, url: &str) -> bool {
+    pub(crate) fn copy_to_clipboard(&mut self, url: &str) -> bool {
         match arboard::Clipboard::new() {
             Ok(mut clip) => match clip.set_text(url) {
                 Ok(()) => {

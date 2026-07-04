@@ -21,6 +21,7 @@ Where it fits: your editor is where you write. A git remote or sync service is h
 - Find and replace (`s`): recursive substring search within the current scope, per-match review checklist with line context, drift detection on apply
 - Markdown preview with syntax highlighting
 - Import from URL (`I`): fetch a public Google Doc as markdown, or a single-file gist (which arrives already linked and synced)
+- Publish to Google Docs (`p`): markdown up-renders to a real Doc via the Drive API; re-publish replaces it. Push-only by design (the round trip is lossy), with a device-flow sign-in on first use
 - Rich paste (`V`): clipboard HTML converts to markdown on the way in
 - Atomic on-disk state, with retry/backoff and rate-limit awareness for the GitHub API
 
@@ -70,7 +71,19 @@ P = "git push"
 
 Single-character keys only; keys that conflict with built-in bindings are dropped at load time with a warning. Commands run via `sh -c` with PWD set to the active root.
 
-Tokens are **not** persisted by this tool; they're resolved fresh on each launch.
+Tokens are **not** persisted by this tool; they're resolved fresh on each launch. (Exception: the optional Google Docs backend caches its OAuth tokens in the data dir with owner-only permissions, because the device flow is too heavy to repeat per session.)
+
+### Publishing to Google Docs
+
+The `p` menu publishes the selected file as a real Google Doc (and updates, opens, or deletes it thereafter). It needs an OAuth client with the Drive API enabled; until an official client ships with releases, supply your own:
+
+```toml
+[gdoc]
+client_id = "....apps.googleusercontent.com"
+client_secret = "..."
+```
+
+Create one in Google Cloud Console: new project, enable the Drive API, create an OAuth client of the "TV and Limited Input devices" type. Only the non-sensitive `drive.file` scope is used, so no verification review is needed. On first publish, penknife shows a short code and opens google.com/device; approve there and the publish continues. Publishing is push-only: a Doc edited on the Google side is reported, never silently pulled over your local file.
 
 ## Usage
 
@@ -95,6 +108,7 @@ Tokens are **not** persisted by this tool; they're resolved fresh on each launch
 | `m` | Normal | Rename / move the selected file (updates store and remote gist filename) |
 | `X` | Normal | Delete menu: remote gist, local file (trash), or both (with confirmation) |
 | `g` | Normal | Git menu: status / log / pull / push (when root is in a repo) |
+| `p` | Normal | Publish menu: Google Docs (publish / update / open / copy URL / unpublish) |
 | `f` | Normal | Find in files: content search with a jump list |
 | `M` | Normal | Resolve ambiguous hydration matches (see below) |
 | `L` | Normal | Link the selected file to an existing gist by URL or ID |

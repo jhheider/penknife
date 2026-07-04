@@ -13,6 +13,7 @@
 mod files;
 mod gist;
 mod keys;
+mod publish;
 mod view;
 
 use std::collections::HashSet;
@@ -111,6 +112,40 @@ pub enum Mode {
     GitMenu {
         selected: usize,
     },
+    /// Publish menu for the selected file. `selected` indexes into
+    /// `publish_options()`.
+    PublishMenu {
+        selected: usize,
+    },
+    /// Waiting for the user to approve the Google device-flow sign-in in a
+    /// browser. Esc aborts the wait (and the pending publish).
+    GdocAuth {
+        user_code: String,
+        verification_url: String,
+    },
+}
+
+/// The publish menu's choices for the selected file, contextual on whether
+/// a Google Doc copy already exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishChoice {
+    Create,
+    Update,
+    Open,
+    CopyUrl,
+    Unpublish,
+}
+
+impl PublishChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Create => "Publish to Google Docs",
+            Self::Update => "Update the Google Doc (replaces content)",
+            Self::Open => "Open the Google Doc in browser",
+            Self::CopyUrl => "Copy the Google Doc URL",
+            Self::Unpublish => "Unpublish (deletes the Google Doc)",
+        }
+    }
 }
 
 /// The delete menu's choices for the selected file. Built contextually:
@@ -187,6 +222,12 @@ pub enum ConfirmAction {
     /// Delete the remote gist and trash the local file in one confirmed
     /// step. The remote delete is async; the trash is immediate.
     DeleteBoth {
+        rel_path: String,
+        root: PathBuf,
+        remote_id: String,
+    },
+    /// Delete the Google Doc copy of a file (the local file is untouched).
+    GdocUnpublish {
         rel_path: String,
         root: PathBuf,
         remote_id: String,
@@ -289,6 +330,13 @@ pub struct App {
     pub last_local_sweep: Option<Instant>,
     /// One-shot: incremental hydration fires on the first tick.
     pub startup_hydrate_done: bool,
+    /// Google Docs client, present when OAuth credentials are configured.
+    /// Arc because publish tasks need owned handles.
+    pub gdoc_client: Option<std::sync::Arc<penknife_gdoc::GdocClient>>,
+    /// rel_path whose publish is waiting on the device-flow sign-in.
+    pub pending_publish: Option<String>,
+    /// Abort handle for the in-flight device-flow poll, so Esc can cancel.
+    pub gdoc_auth_abort: Option<tokio::task::AbortHandle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,7 +366,7 @@ fn files_differ(current: &[ScannedFile], scanned: &[ScannedFile]) -> bool {
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', 'M',
-    'R', 'I', 's', 'm', 'O', 'B', 'g', 'L', 'f',
+    'R', 'I', 's', 'm', 'O', 'B', 'g', 'L', 'f', 'p',
 ];
 
 impl App {
@@ -353,6 +401,15 @@ impl App {
         };
 
         let token = penknife_gist::auth::resolve_token().ok();
+
+        // Google Docs is available only when an OAuth client is configured
+        // (config, env, or the compile-time default in release builds).
+        let gdoc_client = config.gdoc.credentials().map(|creds| {
+            let cache = Config::data_dir().join("gdoc_token.json");
+            std::sync::Arc::new(penknife_gdoc::GdocClient::new(
+                penknife_gdoc::Authenticator::new(creds, cache),
+            ))
+        });
 
         let start_mode = if config.roots.is_empty() {
             Mode::SetupRoot
@@ -417,6 +474,9 @@ impl App {
             // interval.
             last_local_sweep: Some(Instant::now()),
             startup_hydrate_done: false,
+            gdoc_client,
+            pending_publish: None,
+            gdoc_auth_abort: None,
         };
         // Populate the per-file sync-status cache and git status before the
         // first tree build so leaf glyphs reflect the loaded store right away.
