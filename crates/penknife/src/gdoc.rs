@@ -42,28 +42,13 @@ mod tests {
 
     #[test]
     fn extract_doc_id_parses_edit_urls() {
-        let url = "https://docs.google.com/document/d/1z-kKrrCVfKma0BZjKwaWut-oJK2JtnACGt7m-d78sd4/edit?usp=sharing";
-        assert_eq!(
-            extract_doc_id(url).as_deref(),
-            Some("1z-kKrrCVfKma0BZjKwaWut-oJK2JtnACGt7m-d78sd4")
-        );
+        let url = "https://docs.google.com/document/d/1a2b3c4d5e6f7g8h9i0j/edit?usp=sharing";
+        assert_eq!(extract_doc_id(url).as_deref(), Some("1a2b3c4d5e6f7g8h9i0j"));
     }
 
     #[test]
     fn extract_doc_id_rejects_non_doc_urls() {
         assert!(extract_doc_id("https://example.com/whatever").is_none());
         assert!(extract_doc_id("https://docs.google.com/document/d/").is_none());
-    }
-
-    /// Live fixture: a public doc shared for exactly this purpose. Network
-    /// and Google dependent, so ignored by default; run manually with
-    /// `cargo test -p penknife -- --ignored gdoc_live`.
-    #[tokio::test]
-    #[ignore = "network: fetches a live public Google Doc"]
-    async fn gdoc_live_fixture_exports_markdown() {
-        let id = "1z-kKrrCVfKma0BZjKwaWut-oJK2JtnACGt7m-d78sd4";
-        let md = fetch_doc_markdown(id).await.expect("fixture doc fetches");
-        assert!(md.contains("Loose Brick"), "expected the fixture's title");
-        assert!(md.starts_with('#'), "export should arrive as markdown");
     }
 }

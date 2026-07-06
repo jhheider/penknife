@@ -40,7 +40,7 @@ impl App {
                 }
                 Err(e) => {
                     self.pending_copy = None;
-                    self.status_message = format!("Push failed: {e}");
+                    self.status_message = format!("Push failed: {e}{}", scope_hint(&e));
                 }
             },
             AsyncEvent::PullDone {
@@ -966,6 +966,19 @@ async fn build_link_entry(
 /// suffix, trailing slashes, and a `#file-…` fragment. A bare token with no
 /// slash is taken as the ID itself. Returns `None` if nothing ID-shaped
 /// (alphanumeric) remains.
+/// If a gist API error looks like a missing-scope 403, suggest the fix. A
+/// token can be present and valid yet lack the `gist` scope (common when
+/// `gh auth login` ran before you cared about gists), which surfaces as a
+/// bare 403 on the first push. Point the user straight at the one command
+/// that fixes it instead of leaving them to guess.
+fn scope_hint(err: &str) -> &'static str {
+    if err.contains("(403)") {
+        " (your token may lack the 'gist' scope; run: gh auth refresh -s gist)"
+    } else {
+        ""
+    }
+}
+
 fn parse_gist_id(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     // Drop any URL fragment / query, then trailing slashes.
