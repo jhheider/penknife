@@ -42,13 +42,14 @@ pub struct RemoteChange {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum BackendError {
     #[error("not found: {0}")]
     NotFound(String),
     #[error("this backend has no change feed")]
     ChangesUnsupported,
     #[error("{0}")]
-    Api(String),
+    Message(String),
 }
 
 pub type Result<T> = std::result::Result<T, BackendError>;
@@ -93,5 +94,40 @@ mod tests {
     #[test]
     fn backend_is_object_safe() {
         fn _takes_dyn(_: &dyn Backend) {}
+    }
+
+    #[test]
+    fn error_display_is_lowercase_and_punctuation_free() {
+        // Convention (C-GOOD-ERR): compose cleanly when wrapped.
+        assert_eq!(
+            BackendError::NotFound("x".into()).to_string(),
+            "not found: x"
+        );
+        assert_eq!(
+            BackendError::ChangesUnsupported.to_string(),
+            "this backend has no change feed"
+        );
+        assert_eq!(BackendError::Message("boom".into()).to_string(), "boom");
+    }
+
+    #[test]
+    fn value_types_carry_their_fields() {
+        let now = chrono::Utc::now();
+        let r = RemoteRef {
+            remote_id: "id".into(),
+            url: "u".into(),
+            revision: Some(now),
+        };
+        assert_eq!(r.remote_id, "id");
+        let d = RemoteDoc {
+            content: "body".into(),
+            revision: None,
+        };
+        assert_eq!(d.content, "body");
+        let c = RemoteChange {
+            remote_id: "id".into(),
+            revision: now,
+        };
+        assert_eq!(c.revision, now);
     }
 }
