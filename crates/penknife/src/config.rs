@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 
-/// A configured writings root, with optional per-root ignore patterns.
+/// A watched root directory, with optional per-root ignore patterns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Root {
     pub path: PathBuf,
