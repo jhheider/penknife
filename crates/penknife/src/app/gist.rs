@@ -26,7 +26,7 @@ impl App {
                     let url = entry.url.clone();
                     self.store.insert(&root, rel_path.clone(), entry);
                     if let Err(e) = self.store.save() {
-                        self.status_message = format!("Push ok but store save failed: {e}");
+                        self.status_message = format!("Pushed, but saving local state failed: {e}");
                         return;
                     }
                     self.refresh_status_for(&rel_path);
@@ -65,7 +65,8 @@ impl App {
                         }
                         Ok(PullApply::Applied) => {
                             if let Err(e) = self.store.save() {
-                                self.status_message = format!("Pull ok but store save failed: {e}");
+                                self.status_message =
+                                    format!("Pulled, but saving local state failed: {e}");
                                 return;
                             }
                             self.refresh_status_for(&rel_path);
@@ -98,7 +99,7 @@ impl App {
                     remote_updated_at,
                 ) {
                     if let Err(e) = self.store.save() {
-                        self.status_message = format!("Store save failed: {e}");
+                        self.status_message = format!("Saving local state failed: {e}");
                     }
                     self.refresh_status_for(&rel_path);
                     self.rebuild_tree();
@@ -136,7 +137,8 @@ impl App {
                         if !applied.is_empty()
                             && let Err(e) = self.store.save()
                         {
-                            self.status_message = format!("Remote check: store save failed: {e}");
+                            self.status_message =
+                                format!("Remote check: saving local state failed: {e}");
                             return;
                         }
                         self.rebuild_tree();
@@ -236,7 +238,7 @@ impl App {
                         full.remote_updated_at,
                     ) {
                         if let Err(e) = self.store.save() {
-                            self.status_message = format!("Store save failed: {e}");
+                            self.status_message = format!("Saving local state failed: {e}");
                         }
                         self.refresh_status_for(&rel_path);
                         self.rebuild_tree();
@@ -258,7 +260,8 @@ impl App {
                 Ok(()) => {
                     self.store.remove(&root, &rel_path);
                     if let Err(e) = self.store.save() {
-                        self.status_message = format!("Delete ok but store save failed: {e}");
+                        self.status_message =
+                            format!("Deleted, but saving local state failed: {e}");
                         return;
                     }
                     self.status_message = format!("Deleted gist for {rel_path}");
@@ -287,7 +290,7 @@ impl App {
                     let synced = entry.local_sha256 == entry.remote_sha256;
                     self.store.insert(&root, rel_path.clone(), entry);
                     if let Err(e) = self.store.save() {
-                        self.status_message = format!("Linked but store save failed: {e}");
+                        self.status_message = format!("Linked, but saving local state failed: {e}");
                         return;
                     }
                     self.refresh_status_for(&rel_path);
@@ -353,7 +356,7 @@ impl App {
     /// in `save_gdoc_import` once the file exists on disk.
     fn start_gist_import(&mut self, id: String) {
         let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+            self.status_message = crate::app::NO_TOKEN_HINT.into();
             self.mode = Mode::Normal;
             return;
         };
@@ -410,7 +413,7 @@ impl App {
     /// event then records the divergence and prompts for a force-push.
     pub(crate) fn do_sync_up_for(&mut self, rel: String, force: bool) {
         let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+            self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
         let Some(root) = self.active_root_path() else {
@@ -497,7 +500,7 @@ impl App {
     /// can call it once per remote-newer file.
     pub(crate) fn do_sync_down_for(&mut self, rel: String) {
         let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+            self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
         let Some(root) = self.active_root_path() else {
@@ -634,7 +637,7 @@ impl App {
 
     pub(crate) fn do_delete_remote(&mut self, rel_path: String, root: PathBuf, remote_id: String) {
         let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+            self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
         let tx = self.async_tx.clone();
@@ -689,7 +692,7 @@ impl App {
 
     pub(crate) fn do_diff(&mut self) {
         let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+            self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
         let Some(rel) = self.selected_file() else {
@@ -773,7 +776,7 @@ impl App {
 
     pub(crate) fn start_hydration(&mut self) {
         let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+            self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
         let Some(root) = self.active_root_path() else {
@@ -846,7 +849,7 @@ impl App {
         let rel = am.local_path.clone();
         self.store.insert(&root, rel.clone(), entry.clone());
         if let Err(e) = self.store.save() {
-            self.status_message = format!("Pick saved in memory but disk save failed: {e}");
+            self.status_message = format!("Resolved, but saving local state failed: {e}");
         } else {
             self.status_message = format!("Mapped {rel} → {}", cand.url);
         }
@@ -889,7 +892,7 @@ impl App {
     /// store write lands in the `LinkDone` handler.
     pub(crate) fn link_gist_to(&mut self, rel_path: String, raw: &str) {
         let Some(token) = self.token.clone() else {
-            self.status_message = "No GitHub token available.".into();
+            self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
         let Some(root) = self.active_root_path() else {

@@ -54,7 +54,7 @@ impl App {
             Ok(()) => {
                 self.store.remove(&root, &rel_path);
                 if let Err(e) = self.store.save() {
-                    self.status_message = format!("Trashed but store save failed: {e}");
+                    self.status_message = format!("Trashed, but saving local state failed: {e}");
                     return;
                 }
                 if let Err(e) = self.refresh_files() {
@@ -129,7 +129,8 @@ impl App {
         {
             self.store.move_entry(&root, &old_rel, new_rel.clone());
             if let Err(e) = self.store.save() {
-                self.status_message = format!("Renamed locally; store save failed: {e}");
+                self.status_message =
+                    format!("Renamed locally, but saving local state failed: {e}");
                 return;
             }
         }
@@ -507,7 +508,7 @@ impl App {
             let gist_url = entry.url.clone();
             self.store.insert(&root, rel_path, entry);
             if let Err(e) = self.store.save() {
-                self.status_message = format!("Saved; store save failed: {e}");
+                self.status_message = format!("Saved, but saving local state failed: {e}");
             } else {
                 self.status_message = format!("Saved and linked to {gist_url}");
             }
@@ -713,7 +714,7 @@ impl App {
                     self.store.remove(&root, rel);
                 }
                 if let Err(e) = self.store.save() {
-                    self.status_message = format!("Pruned {n}; store save failed: {e}");
+                    self.status_message = format!("Pruned {n}, but saving local state failed: {e}");
                     return;
                 }
                 self.update_status();
