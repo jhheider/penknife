@@ -1,7 +1,7 @@
 [package]
 name = "penknife"
 description = "Git-style remotes for your documents: sync a folder of markdown to GitHub Gists, track drift per file, and copy anything as rich text to paste elsewhere"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -32,9 +32,8 @@ toml = "1.1"
 globset = "0.4"
 unicode-width = "0.2"
 chrono = { workspace = true, features = ["serde"] }
-thiserror = { workspace = true }
-color-eyre = "0.6"
 reqwest = { workspace = true, features = ["json"] }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

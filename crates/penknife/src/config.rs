@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use anyhow::{Context, Result};
 
 /// A watched root directory, with optional per-root ignore patterns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,7 +149,7 @@ impl Config {
             match toml::from_str::<Config>(&data) {
                 Ok(config) => Ok(config),
                 Err(e) => {
-                    eprintln!("Warning: invalid config, starting fresh: {e}");
+                    eprintln!("penknife: warning: invalid config, starting fresh: {e}");
                     Ok(Config::default())
                 }
             }
@@ -161,8 +161,7 @@ impl Config {
     pub fn save(&self) -> Result<()> {
         let dir = Self::data_dir();
         std::fs::create_dir_all(&dir)?;
-        let data = toml::to_string_pretty(self)
-            .map_err(|e| crate::error::PkError::Other(format!("toml serialize: {e}")))?;
+        let data = toml::to_string_pretty(self).context("toml serialize")?;
         std::fs::write(Self::config_path(), data)?;
         Ok(())
     }

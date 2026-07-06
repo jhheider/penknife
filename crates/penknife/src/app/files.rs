@@ -58,7 +58,7 @@ impl App {
                     return;
                 }
                 if let Err(e) = self.refresh_files() {
-                    self.status_message = format!("Trashed but refresh failed: {e}");
+                    self.status_message = format!("Trashed, but refresh failed: {e}");
                     return;
                 }
                 self.status_message = format!("Moved {rel_path} to trash.");
@@ -100,7 +100,7 @@ impl App {
             return;
         }
         let Some(root) = self.active_root_path() else {
-            self.status_message = "No root.".into();
+            self.status_message = "No active root.".into();
             return;
         };
         let old_abs = root.join(&old_rel);
@@ -112,7 +112,7 @@ impl App {
         if let Some(parent) = new_abs.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
-            self.status_message = format!("mkdir failed: {e}");
+            self.status_message = format!("Could not create directory: {e}");
             return;
         }
         if let Err(e) = std::fs::rename(&old_abs, &new_abs) {
@@ -255,7 +255,7 @@ impl App {
             return;
         };
         let Some(root) = self.active_root_path() else {
-            self.status_message = "No root.".into();
+            self.status_message = "No active root.".into();
             self.mode = Mode::Normal;
             return;
         };
@@ -279,7 +279,7 @@ impl App {
             return;
         };
         let Some(root) = self.active_root_path() else {
-            self.status_message = "No root.".into();
+            self.status_message = "No active root.".into();
             self.mode = Mode::Normal;
             return;
         };
@@ -439,7 +439,9 @@ impl App {
 
     pub(crate) fn start_gdoc_fetch(&mut self, url: &str) {
         let Some(doc_id) = crate::gdoc::extract_doc_id(url) else {
-            self.mode = Mode::Message("Invalid Google Doc URL.".into());
+            self.mode = Mode::Message(
+                "Invalid Google Doc URL - expected a docs.google.com/document/d/... link.".into(),
+            );
             return;
         };
         let tx = self.async_tx.clone();
@@ -448,7 +450,12 @@ impl App {
 
         self.spawn_tracked(async move {
             let result = crate::gdoc::fetch_doc_markdown(&doc_id).await;
-            let _ = tx.send(AsyncEvent::GdocFetched(result.map_err(|e| e.to_string())));
+            // `{e:#}` renders the whole anyhow chain (context + source) on one
+            // line, so a network failure keeps its HTTP detail instead of
+            // collapsing to just the "Failed to fetch Google Doc" context.
+            let _ = tx.send(AsyncEvent::GdocFetched(
+                result.map_err(|e| format!("{e:#}")),
+            ));
         });
     }
 
@@ -515,7 +522,7 @@ impl App {
         }
 
         if let Err(e) = self.refresh_files() {
-            self.status_message = format!("Saved but refresh failed: {e}");
+            self.status_message = format!("Saved, but refresh failed: {e}");
         }
     }
 
@@ -527,7 +534,7 @@ impl App {
         match self.git_repo_root.clone() {
             Some(p) => Some(p),
             None => {
-                self.status_message = "Not in a git repo (root has no .git ancestor).".into();
+                self.status_message = "Active root is not inside a git repository.".into();
                 None
             }
         }
@@ -706,7 +713,7 @@ impl App {
             }
             BulkAction::PruneOrphans { rels } => {
                 let Some(root) = self.active_root_path() else {
-                    self.status_message = "No root.".into();
+                    self.status_message = "No active root.".into();
                     return;
                 };
                 let n = rels.len();

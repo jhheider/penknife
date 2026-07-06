@@ -27,13 +27,13 @@ use tui_tree_widget::TreeState;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
-use crate::error::Result;
 use crate::event::AsyncSender;
 use crate::hydrate::AmbiguousMatch;
 use crate::scanner::{self, ScannedFile};
 use crate::store::Store;
 use crate::sync;
 use crate::ui::input::LineEditor;
+use anyhow::Result;
 
 /// Shown when a token-requiring action runs with no token. The token is read
 /// once at launch, so fixing it means restarting.
@@ -475,7 +475,7 @@ impl App {
                     && files_differ(&self.files, &scanned)
                     && let Err(e) = self.refresh_files()
                 {
-                    self.status_message = format!("Refresh error: {e}");
+                    self.status_message = format!("Refresh failed: {e}");
                 }
             }
         }

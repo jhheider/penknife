@@ -4,10 +4,10 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 use penknife_gist::{Gist, GistClient};
 
-use crate::error::Result;
 use crate::scanner::ScannedFile;
 use crate::store::{FileEntry, Store};
 use crate::sync::sha256_hex;
+use anyhow::Result;
 
 #[derive(Debug)]
 pub struct HydrationProgress {

@@ -380,16 +380,17 @@ async fn run_url(file: PathBuf, clip: bool, push: bool, open: bool) -> i32 {
             Ok(PushOutcome::Pushed(entry)) => {
                 let url = entry.url.clone();
                 store.insert(&root, rel.clone(), entry);
-                eprintln!("penknife: published {rel}");
+                eprintln!("penknife: pushed {rel}");
                 if let Err(e) = store.save() {
-                    eprintln!("penknife: published, but saving local state failed: {e}");
+                    eprintln!("penknife: pushed, but saving local state failed: {e}");
                     return EXIT_OPERATIONAL;
                 }
                 url
             }
             Ok(PushOutcome::RemoteChanged { .. }) => {
                 eprintln!(
-                    "penknife: the gist changed on GitHub since your last sync.\n  \
+                    "penknife: not pushing. The gist changed on GitHub since your last sync,\n  \
+                     so pushing now would overwrite those edits.\n  \
                      Inspect:   penknife status --sync {0}\n  \
                      Overwrite: penknife push --force {0}",
                     file.display()
@@ -658,10 +659,9 @@ fn no_token_error() -> i32 {
     EXIT_AUTH
 }
 
-fn report_gist_error(e: crate::error::PkError) -> i32 {
-    use crate::error::PkError;
-    match &e {
-        PkError::Gist(GistError::Api { status: 403, .. }) => {
+fn report_gist_error(e: anyhow::Error) -> i32 {
+    match e.downcast_ref::<GistError>() {
+        Some(GistError::Api { status: 403, .. }) => {
             eprintln!(
                 "penknife: your GitHub token can read but not publish; it's missing the \
                  'gist' scope.\n  \
@@ -670,13 +670,13 @@ fn report_gist_error(e: crate::error::PkError) -> i32 {
             );
             EXIT_AUTH
         }
-        PkError::Gist(GistError::NoToken) => no_token_error(),
-        PkError::Gist(g) => {
+        Some(GistError::NoToken) => no_token_error(),
+        Some(g) => {
             eprintln!("penknife: {g}");
             EXIT_OPERATIONAL
         }
-        _ => {
-            eprintln!("penknife: {e}");
+        None => {
+            eprintln!("penknife: {e:#}");
             EXIT_OPERATIONAL
         }
     }
@@ -765,6 +765,40 @@ mod tests {
         assert_eq!(status_code(SyncStatus::Conflict), '!');
         assert_eq!(status_label(SyncStatus::RemoteNewer), "remote-newer");
         assert_eq!(status_label(SyncStatus::NotGisted), "not-published");
+    }
+
+    #[test]
+    fn report_gist_error_classifies_by_variant() {
+        // A missing token and a 403 (a token without the 'gist' scope) are
+        // auth failures; every other gist error, and any non-gist error, is
+        // operational.
+        assert_eq!(report_gist_error(GistError::NoToken.into()), EXIT_AUTH);
+        let forbidden = GistError::Api {
+            status: 403,
+            message: "Forbidden".into(),
+        };
+        assert_eq!(report_gist_error(forbidden.into()), EXIT_AUTH);
+        let server_err = GistError::Api {
+            status: 500,
+            message: "boom".into(),
+        };
+        assert_eq!(report_gist_error(server_err.into()), EXIT_OPERATIONAL);
+        assert_eq!(
+            report_gist_error(anyhow::anyhow!("a local IO failure")),
+            EXIT_OPERATIONAL
+        );
+    }
+
+    #[test]
+    fn report_gist_error_sees_gist_error_through_context() {
+        use anyhow::Context;
+        // A gist error wrapped in added context must still be classified by
+        // its variant: the downcast walks the chain, so the 'gist'-scope hint
+        // survives even when a caller layers `.context()` on top.
+        let wrapped = Err::<(), _>(GistError::NoToken)
+            .context("while publishing")
+            .unwrap_err();
+        assert_eq!(report_gist_error(wrapped), EXIT_AUTH);
     }
 
     #[test]

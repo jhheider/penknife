@@ -383,7 +383,7 @@ impl App {
                     let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
                     self.mode = Mode::RootSwitcher { selected: new_sel };
                     if let Err(e) = self.refresh_files() {
-                        self.status_message = format!("Refresh error: {e}");
+                        self.status_message = format!("Refresh failed: {e}");
                     }
                     self.update_status();
                 }
@@ -418,7 +418,7 @@ impl App {
                 }
                 self.active_root = self.config.roots.len() - 1;
                 if let Err(e) = self.refresh_files() {
-                    self.status_message = format!("Refresh error: {e}");
+                    self.status_message = format!("Refresh failed: {e}");
                 }
                 self.update_status();
                 self.mode = Mode::Normal;
@@ -717,7 +717,7 @@ impl App {
                 let chosen = all[selected];
                 self.config.sort.mode = chosen;
                 if let Err(e) = self.config.save() {
-                    self.status_message = format!("Saved sort but config save failed: {e}");
+                    self.status_message = format!("Sort saved, but saving config failed: {e}");
                 } else {
                     self.status_message = format!("Sort: {}", chosen.label());
                 }
@@ -730,7 +730,7 @@ impl App {
 
     fn start_bulk_menu(&mut self) {
         if self.active_root_path().is_none() {
-            self.status_message = "No root.".into();
+            self.status_message = "No active root.".into();
             return;
         }
         self.mode = Mode::BulkMenu { selected: 0 };
