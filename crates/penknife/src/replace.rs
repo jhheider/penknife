@@ -47,8 +47,14 @@ pub struct ApplyResult {
 
 /// Scan `scope` recursively for occurrences of `query` in `.md` files.
 /// `root` is the user-configured root (for computing rel_path display).
-/// Empty `query` returns no matches.
+/// Empty `query` returns no matches. Case-sensitive; for a case-insensitive
+/// pass use [`scan_opts`].
 pub fn scan(scope: &Path, root: &Path, query: &str) -> Vec<ReplaceMatch> {
+    scan_opts(scope, root, query, false)
+}
+
+/// Like [`scan`], with an explicit case-insensitivity flag.
+pub fn scan_opts(scope: &Path, root: &Path, query: &str, ignore_case: bool) -> Vec<ReplaceMatch> {
     if query.is_empty() {
         return Vec::new();
     }
@@ -59,6 +65,11 @@ pub fn scan(scope: &Path, root: &Path, query: &str) -> Vec<ReplaceMatch> {
         Ok(f) => f,
         Err(_) => return Vec::new(),
     };
+    let needle = if ignore_case {
+        query.to_lowercase()
+    } else {
+        query.to_string()
+    };
     let mut out = Vec::new();
     for f in files {
         let Ok(content) = std::fs::read_to_string(&f.abs_path) else {
@@ -68,8 +79,18 @@ pub fn scan(scope: &Path, root: &Path, query: &str) -> Vec<ReplaceMatch> {
         // anchored to the configured root regardless of how deep the scope is.
         let rel_path = scanner::rel_to_string(f.abs_path.strip_prefix(root).unwrap_or(&f.abs_path));
         for (line_idx, line) in content.lines().enumerate() {
+            // For a case-insensitive search, match against a lowercased copy
+            // but always report the original line. col_byte indexes the
+            // searched string; it equals the original for the (default)
+            // case-sensitive path, and for -i on ASCII. Non-ASCII case-folding
+            // can shift it, which only affects the optional --json col field.
+            let haystack = if ignore_case {
+                line.to_lowercase()
+            } else {
+                line.to_string()
+            };
             let mut cursor = 0;
-            while let Some(found) = line[cursor..].find(query) {
+            while let Some(found) = haystack[cursor..].find(&needle) {
                 let col = cursor + found;
                 out.push(ReplaceMatch {
                     abs_path: f.abs_path.clone(),
@@ -78,7 +99,7 @@ pub fn scan(scope: &Path, root: &Path, query: &str) -> Vec<ReplaceMatch> {
                     col_byte: col,
                     line_text: line.to_string(),
                 });
-                cursor = col + query.len();
+                cursor = col + needle.len();
             }
         }
     }
@@ -162,6 +183,19 @@ mod tests {
         ));
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn scan_opts_case_insensitive_matches_any_case() {
+        let dir = tmp();
+        fs::write(
+            dir.join("a.md"),
+            "Urslog and urslog and URSLOG.
+",
+        )
+        .unwrap();
+        assert_eq!(scan(&dir, &dir, "urslog").len(), 1); // case-sensitive: one
+        assert_eq!(scan_opts(&dir, &dir, "urslog", true).len(), 3); // -i: all three
     }
 
     #[test]
