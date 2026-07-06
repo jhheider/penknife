@@ -1041,7 +1041,7 @@ pub fn render_setup_root(f: &mut Frame, area: Rect, app: &App) {
     let g = crate::glyphs::glyphs();
     let is_setup = matches!(app.mode, crate::app::Mode::SetupRoot);
     let title: String = if is_setup {
-        format!("{} Welcome to Writings Manager", g.welcome)
+        format!("{} Welcome to penknife", g.welcome)
     } else {
         format!("{} Add Root Directory", g.root)
     };

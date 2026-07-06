@@ -34,8 +34,24 @@ Where it fits: your editor is where you write. A git remote or sync service is h
 
 ### Install
 
+**Prebuilt binary** (no toolchain needed): grab the archive for your platform from the [latest release](https://github.com/jhheider/penknife/releases/latest), unpack it, and put `penknife` on your `PATH`. On macOS, a downloaded binary is quarantined; clear it with `xattr -d com.apple.quarantine ./penknife` (or install via Homebrew below, which avoids this).
+
+**Homebrew** (macOS / Linux):
+
 ```bash
-git clone git@github.com:jhheider/penknife.git
+brew install jhheider/tap/penknife
+```
+
+**With Cargo** (builds from source; needs a Rust toolchain):
+
+```bash
+cargo install --git https://github.com/jhheider/penknife penknife
+```
+
+**From a clone** (for hacking on it):
+
+```bash
+git clone https://github.com/jhheider/penknife.git
 cd penknife
 cargo install --locked --path crates/penknife
 penknife
