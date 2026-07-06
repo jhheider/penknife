@@ -1,40 +1,33 @@
 # penknife
 
-Git-style remotes for your documents.
+A fast terminal home for your markdown writing.
 
-Point penknife at a folder of markdown (an Obsidian vault, a notes directory, anywhere you write) and publish files to GitHub Gists. It tracks every published gist and shows you, per file, whether it is current, ahead, behind, or diverged. When you need to hand your writing to someone who doesn't live in gists, one keystroke copies it as rich text you can paste into a Doc, an email, or Slack. See [ABOUT.md](ABOUT.md) for the design and roadmap.
+Point penknife at a folder of writing (an Obsidian vault, a notes directory, anywhere you keep `.md` files) and it gives you a keyboard-driven browser over all of it: search across everything, preview any file, and hand a piece to someone with one keystroke that pastes cleanly into a Doc, an email, or Slack, formatting intact.
 
-Where it fits: your editor is where you write. A git remote or sync service is how you back up. penknife is how you share, and how you know your shares haven't gone stale.
+That much needs no account and no setup. When you want it, penknife can also keep copies of your files on GitHub and tell you, at a glance, which ones are up to date and which have drifted, so a thing you shared last week never goes quietly stale. That part is optional; the rest works on its own.
 
-## Features
+## What you can do
 
-- Tree-based browser for one or more local writing directories, arbitrarily nested. Supports `.md` and `.json` (with pretty-printed, syntax-highlighted JSON preview)
-- Push, pull, and delete against gists, with per-file sync status and at-a-glance counts in the status bar. Pushes refuse to overwrite a remote that changed since the last sync (with a force option after review)
-- Background polling: a cheap remote check every few minutes detects gists edited on the web or another machine, and a local sweep picks up files created, edited, or deleted outside the TUI. Icons and counts stay honest without any manual refresh; failures back off exponentially so offline sessions don't nag
-- Diff view of local vs remote
-- Open gist in browser (`o`) and copy gist URL (`c`) for quick sharing
-- Jump to next/previous dirty file (`n` / `N`) for triage
-- Hydration: existing gists are matched to local files by filename and content hash automatically at startup, with an interactive resolver (`M`) for ambiguous cases
-- Multi-root: switch between several configured directories from inside the app
-- Fuzzy file picker (`/`): fzf-style modal with smartcase matching and inline highlights, powered by [nucleo](https://crates.io/crates/nucleo-matcher)
-- Find in files (`f`): content search across the current scope with a jump list; Enter opens the matched file
-- Find and replace (`s`): recursive substring search within the current scope, per-match review checklist with line context, drift detection on apply
-- Markdown preview with syntax highlighting
-- Import from URL (`I`): fetch a public Google Doc as markdown, or a single-file gist (which arrives already linked and synced)
-- Copy as rich text (`p`): render the file to HTML and put it on the clipboard, so a paste into Google Docs, email, Slack, or any rich editor keeps headings, bold, lists, tables, and links. Zero auth, no account, nothing to track
-- Rich paste (`V`): clipboard HTML converts to markdown on the way in
-- Atomic on-disk state, with retry/backoff and rate-limit awareness for the GitHub API
+**With zero setup, no account:**
 
-## Quick start
+- Browse a folder of markdown as a tidy tree, arbitrarily nested, and preview any file with syntax highlighting.
+- **Share anything as rich text** (`p`): penknife renders the file and puts it on your clipboard so a paste into Google Docs, email, Slack, Notion, or any rich editor keeps your headings, bold, lists, tables, and links. No sign-up, no upload, nothing to track, just paste.
+- Search the full text of every file (`f`) and jump straight to a match.
+- Find and replace across a whole folder (`s`), reviewing each change before it applies.
+- Open a file in your own editor (`e`), rename or move it (`m`), or pull text off the clipboard into a new file (`V`).
 
-### Prerequisites
+**When you connect GitHub (optional):**
 
-- Rust (edition 2024 toolchain; `rustup update stable` if you're behind)
-- A GitHub token with `gist` scope, exposed via `$GITHUB_TOKEN` or `gh auth token`
+- Publish any file to a gist and keep it in sync, with a per-file status that stays honest: up to date, local is newer, the online copy is newer, or the two have diverged.
+- The tree keeps itself current on its own. Edit a file in another app, or change a gist from your phone, and penknife notices within seconds. No refresh button.
+- Diff your local copy against the online one before you overwrite either side.
+- penknife finds your existing gists and matches them to your files for you the first time you run it.
 
-### Install
+> **What's a gist?** A gist is a single file (or a few) hosted on GitHub, each with its own shareable link and a full history of edits, like a pastebin that remembers every version. penknife uses gists as the place your synced copies live. You need a free GitHub account to use this part; you do not need one for anything above.
 
-**Prebuilt binary** (no toolchain needed): grab the archive for your platform from the [latest release](https://github.com/jhheider/penknife/releases/latest), unpack it, and put `penknife` on your `PATH`. On macOS, a downloaded binary is quarantined; clear it with `xattr -d com.apple.quarantine ./penknife` (or install via Homebrew below, which avoids this).
+## Install
+
+**Download a ready-to-run copy** (nothing else needed): grab the archive for your platform from the [latest release](https://github.com/jhheider/penknife/releases/latest), unpack it, and put `penknife` on your `PATH`. On macOS a downloaded program is quarantined; clear it with `xattr -d com.apple.quarantine ./penknife`, or use Homebrew, which avoids that.
 
 **Homebrew** (macOS / Linux):
 
@@ -42,7 +35,7 @@ Where it fits: your editor is where you write. A git remote or sync service is h
 brew install jhheider/tap/penknife
 ```
 
-**With Cargo** (builds from source; needs a Rust toolchain):
+**With Cargo** (builds from source; needs a [Rust](https://rustup.rs) toolchain):
 
 ```bash
 cargo install --git https://github.com/jhheider/penknife penknife
@@ -54,146 +47,132 @@ cargo install --git https://github.com/jhheider/penknife penknife
 git clone https://github.com/jhheider/penknife.git
 cd penknife
 cargo install --locked --path crates/penknife
-penknife
 ```
 
-### CLI flags
+## Getting started
 
-```
-penknife            # launch the TUI
-penknife --config   # open config.toml in $EDITOR
-penknife --version  # print version
-penknife --help     # print flag help
-```
+Run `penknife`. The first time, it asks for a folder to watch: type a path (`~` works) and press **Enter**. It scans everything under there and shows you the tree.
 
-### First run
+From here you can already browse (`j`/`k` or arrows), open a preview (`Enter`), search everyone's favorite question "where did I write about X?" (`f`), and copy a file as rich text to paste anywhere (`p`). Press `?` at any time for the full key list, and `q` to quit.
 
-If no roots are configured, the app opens a setup dialog. Type a path to a directory of markdown files (`~` is expanded) and press **Enter**. All writings under that directory are scanned recursively.
+**Want live sync too?** Give penknife a GitHub token with the `gist` permission. The friendly way is the [GitHub CLI](https://cli.github.com): run `gh auth login` once and penknife picks it up automatically. Or set `GITHUB_TOKEN` in your environment. Tokens are never written to disk by penknife; it reads them fresh each launch. With a token in place, `u` publishes the selected file and `c` copies its shareable link.
 
-State is persisted under your platform data dir (`~/Library/Application Support/penknife` on macOS, `~/.local/share/penknife` on Linux). An existing `writings-manager` data dir from earlier versions is migrated automatically on first launch.
+## Sharing and syncing
 
-- `config.toml`: list of configured roots plus user-defined aliases
-- `store.json`: per-(root, file) gist mappings
+**Share (no account):** select a file, press `p`, and paste it wherever you're headed. What lands keeps its formatting, because penknife hands the destination real rich text, not raw markdown symbols. This is a deliberate snapshot: you're giving someone a copy, so there's nothing to keep in sync afterward.
 
-Edit the config directly with `penknife --config` (opens `config.toml` in `$EDITOR`).
-Add user aliases under `[aliases]`:
-
-```toml
-[aliases]
-S = "just stats"        # quick word-count summary
-A = "just ai-commit"
-P = "git push"
-```
-
-Single-character keys only; keys that conflict with built-in bindings are dropped at load time with a warning. Commands run via `sh -c` with PWD set to the active root.
-
-Tokens are **not** persisted by this tool; they're resolved fresh on each launch.
-
-## Usage
-
-### Keybindings
-
-| Key | Mode | Action |
-|---|---|---|
-| `Tab` | Normal | Toggle focus: tree pane / preview-diff pane |
-| `j/k` `↓/↑` | Normal | Navigate the focused pane |
-| `Enter` `l` `→` | Normal (tree) | Expand directory / select file |
-| `h` `←` `Bksp` | Normal (tree) | Collapse directory |
-| `PgUp/PgDn` | Normal, Diff | Scroll preview/diff pane |
-| `n` / `N` | Normal | Jump to next / previous non-synced file |
-| `u` | Normal | Push selected file (create or update gist) |
-| `d` | Normal | Pull remote into selected file (with confirmation) |
-| `D` | Normal | Diff local vs remote |
-| `c` | Normal | Copy gist URL to clipboard (auto-pushes if not yet gisted) |
-| `C` | Normal | Copy selected file's contents to clipboard |
-| `V` | Normal | Paste clipboard (HTML converted to markdown) as a new file |
-| `o` | Normal | Open gist URL in the system browser |
-| `e` | Normal | Edit selected file in `$EDITOR` (TUI suspends, then refreshes) |
-| `m` | Normal | Rename / move the selected file (updates store and remote gist filename) |
-| `X` | Normal | Delete menu: remote gist, local file (trash), or both (with confirmation) |
-| `g` | Normal | Git menu: status / log / pull / push (when root is in a repo) |
-| `p` | Normal | Copy the selected file as rich text (paste into Docs, email, Slack) |
-| `f` | Normal | Find in files: content search with a jump list |
-| `M` | Normal | Resolve ambiguous hydration matches (see below) |
-| `L` | Normal | Link the selected file to an existing gist by URL or ID |
-| `I` | Normal | Import from URL: a public Google Doc, or a gist (imports linked and synced) |
-| `R` | Normal | Switch root directory |
-| `q` | Normal | Quit |
-| `j/k` `↑/↓` `PgUp/PgDn` | Diff | Scroll the diff |
-| `j/k` `Enter` `a` `d` `Esc` | Root switcher | Navigate / switch / add / delete root / close |
-| `j/k` `Enter` `s` `Esc` | Ambiguous resolver | Navigate candidates / pick / skip / abort |
-| `y` `n` | Confirm dialog | Confirm / dismiss |
-| `Esc` | Most modes | Cancel and return to Normal |
-
-### Mouse
-
-By default, mouse capture is **off** so terminal-native features (cmd-click on URLs, native text selection, the terminal's own scrollback) keep working. Set `WM_MOUSE=1` in the environment to enable mouse interaction inside the TUI: left-click selects a tree row (or focuses the right pane) and the wheel scrolls whichever pane the cursor is over.
-
-### Status icons
-
-Each file in the tree carries a sync-state icon followed by a git-state icon (the latter is blank for clean / not-in-repo). By default both columns use slim single-width unicode glyphs so rows stay aligned in every terminal/font combo. Set `WM_EMOJI=1` to opt into the wide emoji set, or `WM_NO_EMOJI=1` (or run under a `TERM` of `dumb`/`linux`/`vt100`/`vt220`) to fall back to pure ASCII.
+**Sync (with GitHub):** when you want a living, shareable link that you can tell is current, publish the file as a gist with `u` and share its URL with `c`. From then on each file carries a small status icon:
 
 | Slim (default) | Emoji | ASCII | Meaning |
 |---|---|---|---|
-| `✓` | ✅ | `[=]` | Synced |
-| `↑` | ⬆️ | `[^]` | Local newer (push to update) |
-| `↓` | ⬇️ | `[v]` | Remote newer (pull to update) |
-| `!` | ❗ | `[!]` | Conflict: both diverged |
-| `·` | ⚪ | `[ ]` | Not yet mapped to a gist |
+| `✓` | ✅ | `[=]` | Up to date |
+| `↑` | ⬆️ | `[^]` | Your copy is newer (push to update the gist) |
+| `↓` | ⬇️ | `[v]` | The gist is newer (pull to update your copy) |
+| `!` | ❗ | `[!]` | Both changed since you last synced |
+| `·` | ⚪ | `[ ]` | Not published yet |
 
+The status stays true on its own: penknife checks GitHub every few minutes and re-scans your folder every few seconds, so the icons reflect reality without you asking. Before overwriting either side, `D` shows you a diff, and a push refuses to clobber a gist that changed out from under you until you've looked.
 
-### Polling
+## Keys
 
-The tree keeps itself current; there are no refresh keys.
+Press `?` in the app for this list any time. The essentials:
 
-- **Remote** (default: every 5 minutes): one cheap API listing per check detects gists edited elsewhere and lights up the behind/conflict icons without pulling anything. Consecutive failures double the effective interval (capped at 64x), so an offline session stays quiet.
-- **Local** (default: every 5 seconds): a filesystem sweep re-stats the tree and refreshes it only when membership or mtimes actually changed. Zero hashing in the steady state.
+| Key | What it does |
+|---|---|
+| `j` `k` / arrows | Move around; `Enter` opens a folder or selects a file |
+| `p` | Copy the file as rich text (paste into Docs, email, Slack) |
+| `f` | Find in files: search all your text, jump to a match |
+| `s` | Find and replace across the folder, with review |
+| `e` | Open the file in your `$EDITOR` |
+| `m` | Rename or move the file |
+| `V` | Paste clipboard text as a new file (rich HTML becomes markdown) |
+| `C` | Copy the file's raw markdown to the clipboard |
+| `/` | Fuzzy jump to a file by name |
+| `R` | Switch to another watched folder |
+| `?` | Full help; `q` quits |
 
-Tune or disable either in `config.toml` (`0` disables):
+With a GitHub token, these light up too:
+
+| Key | What it does |
+|---|---|
+| `u` | Publish or update the file as a gist |
+| `d` | Pull the online copy down into your file |
+| `c` | Copy the gist's shareable link (publishes first if needed) |
+| `o` | Open the gist in your browser |
+| `D` | Diff your copy against the online one |
+| `n` / `N` | Jump to the next / previous file that's out of sync |
+| `X` | Delete menu: remove the gist, trash the file, or both |
+| `L` | Link a file to an existing gist by URL or ID |
+| `I` | Import from a URL: a public Google Doc, or a gist |
+| `M` | Resolve any ambiguous gist-to-file matches |
+
+There's also a git menu (`g`) when your folder is a git repository, a sort menu (`O`), and a bulk-actions menu (`B`).
+
+## Configuration
+
+`penknife --config` opens your config file in `$EDITOR`. It lives (with a small state file) in your platform data directory: `~/Library/Application Support/penknife` on macOS, `~/.local/share/penknife` on Linux.
+
+**Watched folders** are added from inside the app (`R`), but you can also list them in config, each with optional ignore patterns:
+
+```toml
+[[roots]]
+path = "~/Documents/writing"
+ignore = ["drafts/**", "*.tmp"]
+```
+
+**Aliases** bind a single key to a shell command, run from the active folder:
+
+```toml
+[aliases]
+S = "just stats"        # a quick word count
+P = "git push"
+```
+
+Keys that clash with built-in ones are ignored with a warning.
+
+**How often it checks** (seconds; `0` turns a check off):
 
 ```toml
 [poll]
-remote_secs = 300
-local_secs = 5
+remote_secs = 300   # check GitHub every 5 minutes
+local_secs = 5      # re-scan the folder every 5 seconds
 ```
 
-### Hydration
+**Appearance and input**, via environment variables:
 
-At startup, penknife matches your existing gists to local files automatically. Three phases:
+- `PENKNIFE_MOUSE=1` turns on mouse support (click a row, scroll a pane). It's off by default so your terminal's own click-to-open-URL and text selection keep working.
+- `PENKNIFE_EMOJI=1` uses wide emoji icons; `PENKNIFE_NO_EMOJI=1` forces plain ASCII. The default is slim single-width symbols that stay aligned everywhere.
 
-1. List your gists (paginated, with retry/backoff and rate-limit handling).
-2. Auto-map files with a unique filename match, fetching each gist's content so the recorded remote hash is real (a divergent remote hydrates as a conflict, not a fake "synced").
-3. For files where multiple gists share the same filename and no content match exists, the status bar reports the count; press `M` to open the resolver and pick one (or skip).
+## Under the hood
 
-Hydration runs in the background; concurrent push/pull is preserved (results merge rather than reload-from-disk).
+Everything below is for the curious and for contributors; you don't need any of it to use penknife.
 
-**Incremental.** After a root's first full walk, the store records a per-root `last_hydrated` timestamp. Subsequent runs pass it as GitHub's `since=` filter, fetching only gists changed since the last walk instead of re-listing your whole account. The cursor advances on every successful run, and is kept per-root.
+### How syncing stays honest
 
-### Manual linking
+penknife records a hash of both your file and its gist at each sync. A background check lists your gists every few minutes (cheap, and it backs off when you're offline) and a filesystem sweep re-scans your folder every few seconds, refreshing only what actually changed. Because it compares real hashes rather than timestamps, a gist edited elsewhere shows up as a genuine conflict, never a false "up to date."
 
-Hydration only auto-pairs a local file with a gist when their filenames match. For a gist created elsewhere whose filename differs, or that you want to attach by hand, select the file and press `L`, then paste the gist URL (`https://gist.github.com/<user>/<id>`) or the bare ID. The gist is fetched, reconciled against the local content, and recorded; the tree then shows whether the two are in sync or have diverged (use `D` to diff, `u`/`d` to reconcile). A multi-file gist must share a filename with the local file (otherwise the pairing is ambiguous and is refused).
+### Hydration (matching gists to files)
 
-## Architecture
+On first run against a folder, penknife lists your gists and pairs them to local files by filename and content. Unique matches map automatically; where several gists share a filename, it asks you to pick (`M`). After the first pass it remembers a per-folder cursor and only fetches gists changed since, so later runs are fast even with hundreds of gists. A gist whose name doesn't match any file can be attached by hand with `L`.
 
-Three-crate Cargo workspace:
+### Project layout
 
-- **`crates/penknife-backend`**: the backend contract (create/read/update/delete plus an optional changed-since feed). A small internal seam so the sync engine, polling, and store don't hard-code GitHub. Gists are the only backend today; the trait keeps the door open.
-- **`crates/penknife-gist`**: standalone GitHub Gist client and the founding `Backend` implementation. Auth via `$GITHUB_TOKEN` or `gh auth token`. Idempotent GET retries with exponential backoff and `Retry-After` / `X-RateLimit-Reset` handling. Pagination via `Link` headers.
-- **`crates/penknife`**: the TUI. Modes for normal navigation, search, diff, confirm, ambiguous-match resolution, root switcher, setup, and URL import. State persistence via atomic temp-file + rename. The store (v3) maps each file to a *list* of published copies keyed by backend, so the model already supports more than one remote per file.
+A three-crate Cargo workspace:
 
-## Development
+- **`crates/penknife-backend`**: the contract a sync target implements (create, read, update, delete, and an optional changed-since feed). A small internal seam so the rest of the app doesn't hard-code GitHub. Gists are the only backend today; the trait keeps the door open.
+- **`crates/penknife-gist`**: a standalone GitHub Gist client and the founding backend. Token from `$GITHUB_TOKEN` or `gh auth token`; idempotent retries with backoff and rate-limit handling; pagination via `Link` headers.
+- **`crates/penknife`**: the terminal app itself. State is saved atomically (write-temp-then-rename) and the on-disk format is versioned, migrating older layouts in place on first launch.
+
+### Development
 
 ```bash
-cargo build           # build
-cargo test            # run unit tests
+cargo test            # run the tests
 cargo clippy          # lint
-cargo fmt             # format (always run before committing)
+cargo fmt             # format (run before committing)
 ```
 
-The store format is versioned; `Store::load` migrates older formats in place on first launch.
-
-House style: em dashes are a CI error, in code and prose alike. Use a comma, colon, or parenthetical instead.
+House style: em dashes and en dashes are a CI error, in code and prose alike. Use a comma, colon, parenthetical, or a plain hyphen instead.
 
 ## License
 
-MIT.
+MIT. See [LICENSE](LICENSE).

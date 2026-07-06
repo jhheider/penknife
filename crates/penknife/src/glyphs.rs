@@ -4,9 +4,9 @@ use std::sync::OnceLock;
 ///
 /// - slim (default): single-column unicode symbols. Predictable widths, so
 ///   tree rows and the status bar stay aligned in every terminal/font combo.
-/// - emoji: the original wide glyphs, opt-in via `WM_EMOJI=1` for terminals
+/// - emoji: the original wide glyphs, opt-in via `PENKNIFE_EMOJI=1` for terminals
 ///   that render them well.
-/// - ASCII: pure 7-bit fallback, via `WM_NO_EMOJI` or a dumb `TERM`.
+/// - ASCII: pure 7-bit fallback, via `PENKNIFE_NO_EMOJI` or a dumb `TERM`.
 pub struct Glyphs {
     pub status_synced: &'static str,
     pub status_local_newer: &'static str,
@@ -101,15 +101,20 @@ pub fn glyphs() -> &'static Glyphs {
 fn pick_profile() -> &'static Glyphs {
     if use_ascii() {
         &ASCII
-    } else if std::env::var_os("WM_EMOJI").is_some() {
+    } else if env_flag("EMOJI") {
         &EMOJI
     } else {
         &SLIM
     }
 }
 
+/// A boolean opt-in flag, read from `PENKNIFE_<name>`.
+pub(crate) fn env_flag(name: &str) -> bool {
+    std::env::var_os(format!("PENKNIFE_{name}")).is_some()
+}
+
 fn use_ascii() -> bool {
-    if std::env::var_os("WM_NO_EMOJI").is_some() {
+    if env_flag("NO_EMOJI") {
         return true;
     }
     matches!(

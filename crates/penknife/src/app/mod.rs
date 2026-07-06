@@ -427,6 +427,15 @@ impl App {
         app.refresh_git_status();
         app.rebuild_tree();
         app.update_status();
+        // Without a token, GitHub sync is simply off; the browse/search/copy
+        // side works fine. Say so once, instead of letting the user discover
+        // it by pressing `u` and hitting a bare error. An alias warning, if
+        // any, is the more actionable message and wins.
+        if app.token.is_none() {
+            app.status_message = "No GitHub token: browsing and p (copy as rich text) work now. \
+                 Run `gh auth login` or set GITHUB_TOKEN to enable sync."
+                .into();
+        }
         if let Some(w) = alias_warning {
             app.status_message = w;
         }
