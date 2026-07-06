@@ -385,7 +385,7 @@ impl App {
                 return;
             }
         };
-        let html = render_markdown_to_html(&markdown);
+        let html = crate::markdown::render_html(&markdown);
         match arboard::Clipboard::new().and_then(|mut c| c.set().html(&html, Some(&markdown))) {
             Ok(()) => {
                 self.status_message = format!("Copied {rel} as rich text (paste anywhere)");
@@ -720,48 +720,5 @@ impl App {
                 self.status_message = format!("Pruned {n} orphan(s).");
             }
         }
-    }
-}
-
-/// Render markdown to a standalone HTML fragment for the clipboard. Uses
-/// pulldown-cmark with the common extensions (tables, strikethrough, task
-/// lists, footnotes) so a rich paste keeps the structure a writer expects.
-fn render_markdown_to_html(markdown: &str) -> String {
-    use pulldown_cmark::{Options, Parser, html};
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_TABLES);
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TASKLISTS);
-    options.insert(Options::ENABLE_FOOTNOTES);
-    let parser = Parser::new_ext(markdown, options);
-    let mut out = String::new();
-    html::push_html(&mut out, parser);
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::render_markdown_to_html;
-
-    #[test]
-    fn renders_headings_and_emphasis() {
-        let html = render_markdown_to_html("# Title\n\nSome **bold** and *italic*.");
-        assert!(html.contains("<h1>Title</h1>"));
-        assert!(html.contains("<strong>bold</strong>"));
-        assert!(html.contains("<em>italic</em>"));
-    }
-
-    #[test]
-    fn renders_lists_and_links() {
-        let html = render_markdown_to_html("- a\n- b\n\n[x](https://e.com)");
-        assert!(html.contains("<ul>"));
-        assert!(html.contains("<li>a</li>"));
-        assert!(html.contains("href=\"https://e.com\""));
-    }
-
-    #[test]
-    fn renders_tables_via_extension() {
-        let html = render_markdown_to_html("| a | b |\n|---|---|\n| 1 | 2 |");
-        assert!(html.contains("<table>"));
     }
 }
