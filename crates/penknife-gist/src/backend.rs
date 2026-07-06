@@ -11,7 +11,7 @@ use crate::error::GistError;
 fn map_err(e: GistError) -> BackendError {
     match e {
         GistError::Api { status: 404, .. } => BackendError::NotFound(e.to_string()),
-        other => BackendError::Api(other.to_string()),
+        other => BackendError::Message(other.to_string()),
     }
 }
 
