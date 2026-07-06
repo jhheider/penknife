@@ -39,7 +39,7 @@ async fn main() -> color_eyre::Result<()> {
         return edit_config();
     }
     if let Some(command) = args.command {
-        std::process::exit(cli::run(command));
+        std::process::exit(cli::run(command).await);
     }
 
     // Panic hook: restore terminal before printing panic
