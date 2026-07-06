@@ -58,7 +58,7 @@ impl App {
                     return;
                 }
                 if let Err(e) = self.refresh_files() {
-                    self.status_message = format!("Trashed but refresh failed: {e}");
+                    self.status_message = format!("Trashed, but refresh failed: {e}");
                     return;
                 }
                 self.status_message = format!("Moved {rel_path} to trash.");
@@ -112,7 +112,7 @@ impl App {
         if let Some(parent) = new_abs.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
-            self.status_message = format!("mkdir failed: {e}");
+            self.status_message = format!("Could not create directory: {e}");
             return;
         }
         if let Err(e) = std::fs::rename(&old_abs, &new_abs) {
@@ -439,7 +439,9 @@ impl App {
 
     pub(crate) fn start_gdoc_fetch(&mut self, url: &str) {
         let Some(doc_id) = crate::gdoc::extract_doc_id(url) else {
-            self.mode = Mode::Message("Invalid Google Doc URL.".into());
+            self.mode = Mode::Message(
+                "Invalid Google Doc URL - expected a docs.google.com/document/d/... link.".into(),
+            );
             return;
         };
         let tx = self.async_tx.clone();
@@ -520,7 +522,7 @@ impl App {
         }
 
         if let Err(e) = self.refresh_files() {
-            self.status_message = format!("Saved but refresh failed: {e}");
+            self.status_message = format!("Saved, but refresh failed: {e}");
         }
     }
 
@@ -532,7 +534,7 @@ impl App {
         match self.git_repo_root.clone() {
             Some(p) => Some(p),
             None => {
-                self.status_message = "Not in a git repo (root has no .git ancestor).".into();
+                self.status_message = "Active root is not inside a git repository.".into();
                 None
             }
         }

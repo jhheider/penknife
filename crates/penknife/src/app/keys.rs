@@ -717,7 +717,7 @@ impl App {
                 let chosen = all[selected];
                 self.config.sort.mode = chosen;
                 if let Err(e) = self.config.save() {
-                    self.status_message = format!("Saved sort but config save failed: {e}");
+                    self.status_message = format!("Sort saved, but saving config failed: {e}");
                 } else {
                     self.status_message = format!("Sort: {}", chosen.label());
                 }

@@ -149,7 +149,7 @@ impl Config {
             match toml::from_str::<Config>(&data) {
                 Ok(config) => Ok(config),
                 Err(e) => {
-                    eprintln!("Warning: invalid config, starting fresh: {e}");
+                    eprintln!("penknife: warning: invalid config, starting fresh: {e}");
                     Ok(Config::default())
                 }
             }

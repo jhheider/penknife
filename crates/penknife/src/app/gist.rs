@@ -192,7 +192,8 @@ impl App {
                     // hydrate only fetches gists changed after this walk began.
                     self.store.set_hydrated_cursor(&data.root, data.new_cursor);
                     if let Err(e) = self.store.save() {
-                        self.status_message = format!("Hydration ok but save failed: {e}");
+                        self.status_message =
+                            format!("Hydrated, but saving local state failed: {e}");
                         return;
                     }
                     self.pending_ambiguous = data.ambiguous;

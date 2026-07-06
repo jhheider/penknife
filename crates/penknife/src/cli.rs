@@ -380,16 +380,17 @@ async fn run_url(file: PathBuf, clip: bool, push: bool, open: bool) -> i32 {
             Ok(PushOutcome::Pushed(entry)) => {
                 let url = entry.url.clone();
                 store.insert(&root, rel.clone(), entry);
-                eprintln!("penknife: published {rel}");
+                eprintln!("penknife: pushed {rel}");
                 if let Err(e) = store.save() {
-                    eprintln!("penknife: published, but saving local state failed: {e}");
+                    eprintln!("penknife: pushed, but saving local state failed: {e}");
                     return EXIT_OPERATIONAL;
                 }
                 url
             }
             Ok(PushOutcome::RemoteChanged { .. }) => {
                 eprintln!(
-                    "penknife: the gist changed on GitHub since your last sync.\n  \
+                    "penknife: not pushing. The gist changed on GitHub since your last sync,\n  \
+                     so pushing now would overwrite those edits.\n  \
                      Inspect:   penknife status --sync {0}\n  \
                      Overwrite: penknife push --force {0}",
                     file.display()

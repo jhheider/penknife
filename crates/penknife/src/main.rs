@@ -122,7 +122,7 @@ fn edit_config() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "vi".to_string());
     let status = std::process::Command::new(&editor).arg(&path).status()?;
     if !status.success() {
-        eprintln!("{editor} exited with status {status}");
+        eprintln!("penknife: {editor} exited with status {status}");
     }
     Ok(())
 }
