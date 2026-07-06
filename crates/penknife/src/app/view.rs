@@ -175,7 +175,7 @@ impl App {
         if index < self.config.roots.len() {
             self.active_root = index;
             if let Err(e) = self.refresh_files() {
-                self.status_message = format!("Refresh error: {e}");
+                self.status_message = format!("Refresh failed: {e}");
             }
             self.update_status();
         }

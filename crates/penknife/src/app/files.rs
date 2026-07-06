@@ -100,7 +100,7 @@ impl App {
             return;
         }
         let Some(root) = self.active_root_path() else {
-            self.status_message = "No root.".into();
+            self.status_message = "No active root.".into();
             return;
         };
         let old_abs = root.join(&old_rel);
@@ -255,7 +255,7 @@ impl App {
             return;
         };
         let Some(root) = self.active_root_path() else {
-            self.status_message = "No root.".into();
+            self.status_message = "No active root.".into();
             self.mode = Mode::Normal;
             return;
         };
@@ -279,7 +279,7 @@ impl App {
             return;
         };
         let Some(root) = self.active_root_path() else {
-            self.status_message = "No root.".into();
+            self.status_message = "No active root.".into();
             self.mode = Mode::Normal;
             return;
         };
@@ -713,7 +713,7 @@ impl App {
             }
             BulkAction::PruneOrphans { rels } => {
                 let Some(root) = self.active_root_path() else {
-                    self.status_message = "No root.".into();
+                    self.status_message = "No active root.".into();
                     return;
                 };
                 let n = rels.len();

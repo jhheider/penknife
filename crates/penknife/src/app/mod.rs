@@ -475,7 +475,7 @@ impl App {
                     && files_differ(&self.files, &scanned)
                     && let Err(e) = self.refresh_files()
                 {
-                    self.status_message = format!("Refresh error: {e}");
+                    self.status_message = format!("Refresh failed: {e}");
                 }
             }
         }
