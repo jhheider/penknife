@@ -66,12 +66,7 @@ pub fn scan(scope: &Path, root: &Path, query: &str) -> Vec<ReplaceMatch> {
         };
         // Compute rel_path relative to *root*, not scope, so display stays
         // anchored to the configured root regardless of how deep the scope is.
-        let rel_path = f
-            .abs_path
-            .strip_prefix(root)
-            .unwrap_or(&f.abs_path)
-            .to_string_lossy()
-            .to_string();
+        let rel_path = scanner::rel_to_string(f.abs_path.strip_prefix(root).unwrap_or(&f.abs_path));
         for (line_idx, line) in content.lines().enumerate() {
             let mut cursor = 0;
             while let Some(found) = line[cursor..].find(query) {

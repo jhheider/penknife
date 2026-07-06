@@ -35,6 +35,11 @@ use crate::store::Store;
 use crate::sync;
 use crate::ui::input::LineEditor;
 
+/// Shown when a token-requiring action runs with no token. The token is read
+/// once at launch, so fixing it means restarting.
+pub const NO_TOKEN_HINT: &str =
+    "No GitHub token. Run `gh auth login` (or set GITHUB_TOKEN), then restart penknife.";
+
 #[derive(Debug)]
 pub enum Mode {
     Normal,

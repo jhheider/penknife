@@ -43,6 +43,9 @@ jobs:
 
   coverage:
     name: Coverage
+    # Main-only: the instrumented rebuild duplicates the test compile, so PRs
+    # skip it (they still run fmt/clippy and the full test matrix).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

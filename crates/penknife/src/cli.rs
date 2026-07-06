@@ -27,6 +27,7 @@ pub const EXIT_OK: i32 = 0;
 pub const EXIT_NEGATIVE: i32 = 1;
 pub const EXIT_AUTH: i32 = 3;
 pub const EXIT_NO_ROOT: i32 = 4;
+pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_OPERATIONAL: i32 = 5;
 
 #[derive(Parser)]
@@ -59,6 +60,8 @@ pub enum Command {
         standalone: bool,
     },
     /// Search the full text of your writing (substring, grep-style)
+    ///
+    /// Searches .md files under the given path (default: the current directory).
     Search {
         /// Text to find (case-sensitive substring)
         query: String,
@@ -75,6 +78,8 @@ pub enum Command {
         quiet: bool,
     },
     /// Publish or update the file's gist, then print its URL
+    ///
+    /// Needs a GitHub token with the 'gist' scope (run 'gh auth login').
     Push {
         /// A markdown file under one of your watched folders
         file: PathBuf,
@@ -83,6 +88,8 @@ pub enum Command {
         force: bool,
     },
     /// Print (and optionally copy) the file's shareable gist URL
+    ///
+    /// Needs a GitHub token with the 'gist' scope (run 'gh auth login').
     Url {
         /// A markdown file under one of your watched folders
         file: PathBuf,
@@ -97,6 +104,8 @@ pub enum Command {
         open: bool,
     },
     /// Show per-file sync drift; exit 1 if anything has drifted
+    ///
+    /// Offline by default; --sync checks GitHub live and needs a token.
     Status {
         /// A file or directory to check (default: every published file)
         path: Option<PathBuf>,
@@ -196,7 +205,7 @@ fn read_source(file: Option<&str>) -> Result<(String, String), i32> {
                     "penknife: no input. Give a file, or pipe markdown in:\n  \
                      penknife render notes.md\n  cat notes.md | penknife render -"
                 );
-                Err(2)
+                Err(EXIT_USAGE)
             } else {
                 read_stdin()
             }
@@ -286,11 +295,12 @@ async fn run_push(file: PathBuf, force: bool) -> i32 {
         Ok(PushOutcome::Pushed(entry)) => {
             let url = entry.url.clone();
             store.insert(&root, rel.clone(), entry);
-            if let Err(e) = store.save() {
-                eprintln!("penknife: pushed, but saving local state failed: {e}");
-            }
             eprintln!("penknife: pushed {rel}");
             println!("{url}");
+            if let Err(e) = store.save() {
+                eprintln!("penknife: pushed, but saving local state failed: {e}");
+                return EXIT_OPERATIONAL;
+            }
             EXIT_OK
         }
         Ok(PushOutcome::RemoteChanged { .. }) => {
@@ -346,16 +356,18 @@ async fn run_url(file: PathBuf, clip: bool, push: bool, open: bool) -> i32 {
             Ok(PushOutcome::Pushed(entry)) => {
                 let url = entry.url.clone();
                 store.insert(&root, rel.clone(), entry);
+                eprintln!("penknife: published {rel}");
                 if let Err(e) = store.save() {
                     eprintln!("penknife: published, but saving local state failed: {e}");
+                    return EXIT_OPERATIONAL;
                 }
-                eprintln!("penknife: published {rel}");
                 url
             }
             Ok(PushOutcome::RemoteChanged { .. }) => {
                 eprintln!(
-                    "penknife: the gist changed on GitHub since your last sync; \
-                     run 'penknife push --force {}' to overwrite it.",
+                    "penknife: the gist changed on GitHub since your last sync.\n  \
+                     Inspect:   penknife status --sync {0}\n  \
+                     Overwrite: penknife push --force {0}",
                     file.display()
                 );
                 return EXIT_NEGATIVE;
@@ -437,16 +449,25 @@ async fn run_status(
     };
 
     let mut any_drift = false;
+    let mut had_errors = false;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     for (root, rel, entry) in &targets {
-        let abs = Path::new(root).join(rel);
-        let content = std::fs::read_to_string(&abs).unwrap_or_default();
+        let abs = root.join(rel);
+        let content = match std::fs::read_to_string(&abs) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("penknife: {rel}: {e}");
+                had_errors = true;
+                continue;
+            }
+        };
         let status = if let Some(client) = &client {
             match sync::full_status(client, &content, entry, &basename(rel)).await {
                 Ok(fs) => fs.status,
                 Err(e) => {
                     eprintln!("penknife: {rel}: {e}");
+                    had_errors = true;
                     continue;
                 }
             }
@@ -479,7 +500,13 @@ async fn run_status(
             );
         }
     }
-    if any_drift { EXIT_NEGATIVE } else { EXIT_OK }
+    if had_errors {
+        EXIT_OPERATIONAL
+    } else if any_drift {
+        EXIT_NEGATIVE
+    } else {
+        EXIT_OK
+    }
 }
 
 /// Map a file path to (configured root, rel_path within it). The store keys on
@@ -496,7 +523,7 @@ fn resolve_file(config: &Config, target: &Path) -> Result<(PathBuf, String), i32
     for root in &config.roots {
         let canon_root = std::fs::canonicalize(&root.path).unwrap_or_else(|_| root.path.clone());
         if let Ok(rel) = canon.strip_prefix(&canon_root) {
-            return Ok((root.path.clone(), rel.to_string_lossy().replace('\\', "/")));
+            return Ok((root.path.clone(), crate::scanner::rel_to_string(rel)));
         }
     }
     eprintln!(
@@ -538,6 +565,10 @@ fn report_gist_error(e: crate::error::PkError) -> i32 {
             EXIT_AUTH
         }
         PkError::Gist(GistError::NoToken) => no_token_error(),
+        PkError::Gist(g) => {
+            eprintln!("penknife: {g}");
+            EXIT_OPERATIONAL
+        }
         _ => {
             eprintln!("penknife: {e}");
             EXIT_OPERATIONAL

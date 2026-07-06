@@ -8,10 +8,16 @@ pub fn resolve_token() -> Result<String> {
         return Ok(token);
     }
 
-    let output = std::process::Command::new("gh")
+    // `gh` not being installed (or otherwise unspawnable) is not an error:
+    // it just means there's no token this way. Fall through to NoToken so the
+    // caller shows the "run gh auth login / set GITHUB_TOKEN" guidance rather
+    // than a confusing "failed to run gh" message.
+    let Ok(output) = std::process::Command::new("gh")
         .args(["auth", "token"])
         .output()
-        .map_err(|e| GistError::GhCli(e.to_string()))?;
+    else {
+        return Err(GistError::NoToken);
+    };
 
     if output.status.success() {
         let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
