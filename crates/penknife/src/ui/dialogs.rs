@@ -163,11 +163,11 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
         dim,
     ));
     lines.push(Line::styled(
-        "Set WM_MOUSE=1 to enable click-to-select + wheel-scroll routing.",
+        "Set PENKNIFE_MOUSE=1 to enable click-to-select + wheel-scroll routing.",
         dim,
     ));
     lines.push(Line::styled(
-        "Icons: slim unicode by default; WM_EMOJI=1 for emoji, WM_NO_EMOJI=1 for ASCII.",
+        "Icons: slim unicode by default; PENKNIFE_EMOJI=1 for emoji, PENKNIFE_NO_EMOJI=1 for ASCII.",
         dim,
     ));
     lines.push(Line::raw(""));

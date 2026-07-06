@@ -46,7 +46,7 @@ async fn main() -> color_eyre::Result<()> {
 
     // Setup terminal. Mouse capture is OFF by default so terminal-native
     // features (cmd-click on URLs, native text selection) keep working.
-    // Power users can opt in with WM_MOUSE=1.
+    // Power users can opt in with PENKNIFE_MOUSE=1.
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
@@ -54,7 +54,7 @@ async fn main() -> color_eyre::Result<()> {
 
     let (tx, mut rx) = async_channel();
     let mut app = App::new(tx)?;
-    if std::env::var_os("WM_MOUSE").is_some() {
+    if glyphs::env_flag("MOUSE") {
         io::stdout().execute(EnableMouseCapture)?;
         app.mouse_capture = true;
     }
