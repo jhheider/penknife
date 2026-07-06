@@ -1,38 +1,23 @@
-name: Audit
+name: Security Audit
 
+# Weekly (and on demand) rather than per-push - advisories rarely change
+# between commits, and dependency changes are caught by review.
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - '**/Cargo.toml'
-      - 'Cargo.lock'
-  pull_request:
-    branches: [ main ]
-    paths:
-      - '**/Cargo.toml'
-      - 'Cargo.lock'
   schedule:
-    # Weekly: new advisories land against unchanged lockfiles.
-    - cron: '17 6 * * 1'
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch: {}
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  checks: write
+  issues: write
 
 jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-
-      - uses: taiki-e/install-action@v2
+      - uses: rustsec/audit-check@v2
         with:
-          tool: cargo-audit
-
-      - name: Run cargo audit
-        run: cargo audit
+          token: ${{ secrets.GITHUB_TOKEN }}

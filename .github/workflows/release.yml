@@ -1,82 +1,162 @@
 name: Release
 
+# Fires when a GitHub Release is published. The full release ceremony:
+#   gh release create vX.Y.Z --generate-notes
+# (version must already be committed in the Cargo.tomls) - this builds the
+# platform binaries, attaches them, publishes the workspace crates, and
+# refreshes the Homebrew formula.
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
+  # Manual trigger to (re)build binaries and refresh the tap formula for an
+  # existing release. Builds from the tag's own code; the crates publish is
+  # skipped on dispatch (binaries + formula only).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and attach binaries to (e.g. v0.1.0)"
+        required: true
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
 
 permissions:
   contents: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
+    name: Build (${{ matrix.asset_name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            asset_name: penknife-linux-x86_64.tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            asset_name: penknife-linux-aarch64.tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset_name: penknife-macos-x86_64.tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
+            asset_name: penknife-macos-aarch64.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            asset_name: penknife-windows-x86_64.zip
+    steps:
+      # Build the tag's own code (matters on dispatch), so attached binaries
+      # match the released source.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Installs the cross linker for the non-native linux-aarch64 build.
+      - uses: taiki-e/setup-cross-toolchain-action@v1
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        with:
+          target: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release -p penknife --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          bin=target/${{ matrix.target }}/release/penknife
+          staging=penknife-stage
+          mkdir -p "$staging"
+          cp README.md ABOUT.md LICENSE "$staging/" 2>/dev/null || true
+          if [[ "${{ matrix.asset_name }}" == *.zip ]]; then
+            cp "$bin.exe" "$staging/"
+            7z a "$GITHUB_WORKSPACE/${{ matrix.asset_name }}" "./$staging/*"
+          else
+            cp "$bin" "$staging/"
+            tar czf "$GITHUB_WORKSPACE/${{ matrix.asset_name }}" -C "$staging" .
+          fi
+
+      - name: Attach to release
+        shell: bash
+        run: gh release upload '${{ github.event.release.tag_name || inputs.tag }}' '${{ matrix.asset_name }}' --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: build
+    # Only on a real release; a manual dispatch is for binaries + formula.
+    if: ${{ github.event_name == 'release' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build release binary
-        run: cargo build --release -p penknife
-
-      - name: Package (unix)
-        if: runner.os != 'Windows'
+      # Publish only the crates whose current version is not already on
+      # crates.io, in dependency order (backend -> gist -> penknife), waiting
+      # for the index between each. `cargo publish` is used directly so a
+      # crate changed without a version bump stays at its published version.
+      - name: Publish changed crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          mkdir -p dist
-          cp target/release/penknife dist/
-          tar -C dist -czf "penknife-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" penknife
+          set -euo pipefail
+          ua="penknife-release (jhheider@gmail.com)"
+          on_registry() { # crate ver -> success if that version is on crates.io
+            [ "$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" \
+                "https://crates.io/api/v1/crates/$1/$2")" = "200" ]
+          }
+          for c in penknife-backend penknife-gist penknife; do
+            ver=$(cargo metadata --no-deps --format-version 1 \
+              | python3 -c "import sys,json;print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='$c'))")
+            if on_registry "$c" "$ver"; then
+              echo "$c $ver already on crates.io - skip"
+              continue
+            fi
+            echo "publishing $c $ver"
+            cargo publish -p "$c"
+            echo "waiting for $c $ver to appear on the index..."
+            for _ in $(seq 1 60); do on_registry "$c" "$ver" && break; sleep 5; done
+          done
 
-      - name: Package (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/penknife.exe dist/
-          Compress-Archive -Path dist/penknife.exe -DestinationPath "penknife-${{ github.ref_name }}-${{ matrix.target }}.zip"
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: penknife-${{ matrix.target }}
-          path: penknife-${{ github.ref_name }}-${{ matrix.target }}.*
-          retention-days: 3
-
-  release:
-    name: Create release
+  bump-formula:
+    name: Refresh the Homebrew formula
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     steps:
+      # Check out the default branch for the current bump script (the release
+      # tag may predate it); the script retags URLs and recomputes the shas.
       - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v7
         with:
-          path: artifacts
-          merge-multiple: true
+          ref: ${{ github.event.repository.default_branch }}
 
-      - name: Create GitHub release
+      - name: Refresh the binary formula on the tap
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "penknife ${{ github.ref_name }}" \
-            --generate-notes \
-            artifacts/*
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/jhheider/homebrew-tap.git" tap
+          python3 .github/scripts/bump-tap-formula.py "$TAG" tap/Formula/penknife.rb
+          cd tap
+          if git diff --quiet; then
+            echo "formula already at ${TAG}; nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "penknife ${TAG#v}: refresh binary formula"
+          git push

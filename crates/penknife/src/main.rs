@@ -247,7 +247,7 @@ fn suspend_and_run_alias(
     use std::io::Write as _;
     let _ = write!(
         io::stdout(),
-        "\n\x1b[2m[Press any key to return to wm]\x1b[0m"
+        "\n\x1b[2m[Press any key to return to penknife]\x1b[0m"
     );
     let _ = io::stdout().flush();
     enable_raw_mode()?;
