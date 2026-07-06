@@ -2,7 +2,7 @@
 
 Git-style remotes for your documents.
 
-Point penknife at a folder of markdown (an Obsidian vault, a notes directory, anywhere you write) and publish files to GitHub Gists. It tracks every published copy and shows you, per file, whether it is current, ahead, behind, or diverged. More backends are planned; see [ABOUT.md](ABOUT.md) for the roadmap.
+Point penknife at a folder of markdown (an Obsidian vault, a notes directory, anywhere you write) and publish files to GitHub Gists. It tracks every published gist and shows you, per file, whether it is current, ahead, behind, or diverged. When you need to hand your writing to someone who doesn't live in gists, one keystroke copies it as rich text you can paste into a Doc, an email, or Slack. See [ABOUT.md](ABOUT.md) for the design and roadmap.
 
 Where it fits: your editor is where you write. A git remote or sync service is how you back up. penknife is how you share, and how you know your shares haven't gone stale.
 
@@ -21,7 +21,7 @@ Where it fits: your editor is where you write. A git remote or sync service is h
 - Find and replace (`s`): recursive substring search within the current scope, per-match review checklist with line context, drift detection on apply
 - Markdown preview with syntax highlighting
 - Import from URL (`I`): fetch a public Google Doc as markdown, or a single-file gist (which arrives already linked and synced)
-- Publish to Google Docs (`p`): markdown up-renders to a real Doc via the Drive API; re-publish replaces it. Push-only by design (the round trip is lossy), with a device-flow sign-in on first use
+- Copy as rich text (`p`): render the file to HTML and put it on the clipboard, so a paste into Google Docs, email, Slack, or any rich editor keeps headings, bold, lists, tables, and links. Zero auth, no account, nothing to track
 - Rich paste (`V`): clipboard HTML converts to markdown on the way in
 - Atomic on-disk state, with retry/backoff and rate-limit awareness for the GitHub API
 
@@ -71,19 +71,7 @@ P = "git push"
 
 Single-character keys only; keys that conflict with built-in bindings are dropped at load time with a warning. Commands run via `sh -c` with PWD set to the active root.
 
-Tokens are **not** persisted by this tool; they're resolved fresh on each launch. (Exception: the optional Google Docs backend caches its OAuth tokens in the data dir with owner-only permissions, because the device flow is too heavy to repeat per session.)
-
-### Publishing to Google Docs
-
-The `p` menu publishes the selected file as a real Google Doc (and updates, opens, or deletes it thereafter). It needs an OAuth client with the Drive API enabled; until an official client ships with releases, supply your own:
-
-```toml
-[gdoc]
-client_id = "....apps.googleusercontent.com"
-client_secret = "..."
-```
-
-Create one in Google Cloud Console: new project, enable the Drive API, create an OAuth client of the "TV and Limited Input devices" type. Only the non-sensitive `drive.file` scope is used, so no verification review is needed. On first publish, penknife shows a short code and opens google.com/device; approve there and the publish continues. Publishing is push-only: a Doc edited on the Google side is reported, never silently pulled over your local file.
+Tokens are **not** persisted by this tool; they're resolved fresh on each launch.
 
 ## Usage
 
@@ -108,7 +96,7 @@ Create one in Google Cloud Console: new project, enable the Drive API, create an
 | `m` | Normal | Rename / move the selected file (updates store and remote gist filename) |
 | `X` | Normal | Delete menu: remote gist, local file (trash), or both (with confirmation) |
 | `g` | Normal | Git menu: status / log / pull / push (when root is in a repo) |
-| `p` | Normal | Publish menu: Google Docs (publish / update / open / copy URL / unpublish) |
+| `p` | Normal | Copy the selected file as rich text (paste into Docs, email, Slack) |
 | `f` | Normal | Find in files: content search with a jump list |
 | `M` | Normal | Resolve ambiguous hydration matches (see below) |
 | `L` | Normal | Link the selected file to an existing gist by URL or ID |
@@ -137,7 +125,6 @@ Each file in the tree carries a sync-state icon followed by a git-state icon (th
 | `!` | ❗ | `[!]` | Conflict: both diverged |
 | `·` | ⚪ | `[ ]` | Not yet mapped to a gist |
 
-Files published to Google Docs carry a trailing diamond badge: green when the Doc matches the last-published content, yellow when the local file has moved on since (re-publish with `p` to refresh it).
 
 ### Polling
 
@@ -174,9 +161,9 @@ Hydration only auto-pairs a local file with a gist when their filenames match. F
 
 Three-crate Cargo workspace:
 
-- **`crates/penknife-backend`**: the backend contract (create/read/update/delete plus an optional changed-since feed). Each backend declares itself *sync* (lossless round-trip, pull is safe) or *publish* (lossy up-render, push-only). One trait, many services.
+- **`crates/penknife-backend`**: the backend contract (create/read/update/delete plus an optional changed-since feed). A small internal seam so the sync engine, polling, and store don't hard-code GitHub. Gists are the only backend today; the trait keeps the door open.
 - **`crates/penknife-gist`**: standalone GitHub Gist client and the founding `Backend` implementation. Auth via `$GITHUB_TOKEN` or `gh auth token`. Idempotent GET retries with exponential backoff and `Retry-After` / `X-RateLimit-Reset` handling. Pagination via `Link` headers.
-- **`crates/penknife`**: the TUI. Modes for normal navigation, search, diff, confirm, ambiguous-match resolution, root switcher, setup, and URL import. State persistence via atomic temp-file + rename. The store (v3) maps each file to a *list* of published copies, one per backend, so a single essay can be simultaneously current as a gist and (soon) a Google Doc.
+- **`crates/penknife`**: the TUI. Modes for normal navigation, search, diff, confirm, ambiguous-match resolution, root switcher, setup, and URL import. State persistence via atomic temp-file + rename. The store (v3) maps each file to a *list* of published copies keyed by backend, so the model already supports more than one remote per file.
 
 ## Development
 

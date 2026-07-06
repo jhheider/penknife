@@ -1,6 +1,6 @@
 [package]
 name = "penknife"
-description = "Git-style remotes for your documents: publish a folder of markdown to Gists and more, and track every copy for drift"
+description = "Git-style remotes for your documents: sync a folder of markdown to GitHub Gists, track drift per file, and copy anything as rich text to paste elsewhere"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,9 +10,7 @@ keywords = ["tui", "markdown", "gist", "notes", "sync"]
 categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
-penknife-backend = { path = "../penknife-backend" }
 penknife-gist = { path = "../penknife-gist" }
-penknife-gdoc = { path = "../penknife-gdoc" }
 ratatui = "0.30"
 crossterm = "0.29"
 tui-tree-widget = "0.24"
@@ -25,6 +23,7 @@ sha2 = "0.11"
 similar = "3"
 arboard = "3"
 htmd = "0.5"
+pulldown-cmark = "0.13"
 open = "5"
 nucleo-matcher = "0.3"
 trash = "5"

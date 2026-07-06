@@ -1,31 +1,19 @@
 //! The backend contract penknife publishes documents through.
 //!
-//! A backend is one remote service that can hold a copy of a local document:
-//! GitHub Gists, Google Docs, Notion, and so on. The trait is deliberately
+//! A backend is one remote service that can hold a copy of a local document
+//! (GitHub Gists today; the seam is here for more). The trait is deliberately
 //! small; it mirrors exactly what penknife's sync engine consumes (create,
 //! read, update, delete, and an optional changed-since feed for cheap
 //! polling), so one implementation unlocks the whole UI.
 //!
-//! Backends declare themselves [`BackendKind::Sync`] or
-//! [`BackendKind::Publish`]. Sync backends round-trip content losslessly, so
-//! pulling remote content over the local file is safe. Publish backends
-//! up-render on the way out (markdown → a Google Doc) and cannot faithfully
-//! come back; penknife treats their remote edits as "diverged, view in
-//! browser" rather than offering a destructive pull.
+//! Every backend is a *sync* backend: content round-trips losslessly, so
+//! pulling remote content back over the local file is safe. (An earlier
+//! design also modeled lossy "publish-only" backends; that was cut along
+//! with the Google Docs backend, since a lossy remote can't participate in
+//! the drift model honestly.)
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-
-/// How faithfully content survives a round trip through this backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackendKind {
-    /// Lossless round-trip: what you push is byte-for-byte what you can
-    /// read back. Pull is safe.
-    Sync,
-    /// Lossy up-render: push replaces the remote wholesale, and reading
-    /// back may lose formatting. Push-only in the UI.
-    Publish,
-}
 
 /// A reference to a document held by a backend, as returned by mutations.
 #[derive(Debug, Clone)]
@@ -75,9 +63,6 @@ pub trait Backend: Send + Sync {
     /// Stable machine name, recorded in the store per copy (e.g. "gist").
     fn name(&self) -> &'static str;
 
-    /// Whether round-trips are lossless (sync) or push-only (publish).
-    fn kind(&self) -> BackendKind;
-
     /// Publish a new document. `description` may be ignored by backends
     /// without such a field.
     async fn create(&self, filename: &str, content: &str, description: &str) -> Result<RemoteRef>;
@@ -108,10 +93,5 @@ mod tests {
     #[test]
     fn backend_is_object_safe() {
         fn _takes_dyn(_: &dyn Backend) {}
-    }
-
-    #[test]
-    fn kinds_are_distinguishable() {
-        assert_ne!(BackendKind::Sync, BackendKind::Publish);
     }
 }

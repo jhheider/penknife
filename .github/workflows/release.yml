@@ -36,12 +36,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        env:
-          # The embedded Google OAuth client for official builds. Absent
-          # secrets mean the gdoc backend needs user-supplied credentials,
-          # which is fine for pre-release tags.
-          PENKNIFE_GDOC_DEFAULT_CLIENT_ID: ${{ secrets.GDOC_CLIENT_ID }}
-          PENKNIFE_GDOC_DEFAULT_CLIENT_SECRET: ${{ secrets.GDOC_CLIENT_SECRET }}
         run: cargo build --release -p penknife
 
       - name: Package (unix)

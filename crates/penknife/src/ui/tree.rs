@@ -28,13 +28,11 @@ struct Node<'a> {
 /// directory depth - components are walked recursively rather than truncated.
 /// `status_cache` carries the precomputed per-file sync status (so the tree
 /// build doesn't re-read every file). `git_statuses` is optional per-file
-/// git state; empty map = no git column. `publish_states` marks files with a
-/// Google Doc copy (value = stale, i.e. local changed since publish).
+/// git state; empty map = no git column.
 pub fn build_tree<'a>(
     files: &[ScannedFile],
     status_cache: &HashMap<String, SyncStatus>,
     git_statuses: &HashMap<String, GitStatus>,
-    publish_states: &HashMap<String, bool>,
 ) -> BuiltTree<'a> {
     let mut root_node: Node = Node::default();
 
@@ -60,7 +58,6 @@ pub fn build_tree<'a>(
     let row_state = RowState {
         status_cache,
         git_statuses,
-        publish_states,
         dir_counts: &dir_counts,
     };
     let items = render_node(&root_node, "", &row_state, &mut identifiers, &mut file_ids);
@@ -129,7 +126,6 @@ fn tally_dirs(
 struct RowState<'s> {
     status_cache: &'s HashMap<String, SyncStatus>,
     git_statuses: &'s HashMap<String, GitStatus>,
-    publish_states: &'s HashMap<String, bool>,
     dir_counts: &'s HashMap<String, [usize; 5]>,
 }
 
@@ -164,8 +160,7 @@ fn render_node<'a>(
             .copied()
             .unwrap_or(SyncStatus::NotGisted);
         let git = state.git_statuses.get(&file.rel_path).copied();
-        let published = state.publish_states.get(&file.rel_path).copied();
-        let label = format_leaf(&file.rel_path, status, git, published);
+        let label = format_leaf(&file.rel_path, status, git);
         let id = file.rel_path.clone();
         identifiers.push(id.clone());
         file_ids.insert(id.clone());
@@ -175,12 +170,7 @@ fn render_node<'a>(
     items
 }
 
-fn format_leaf(
-    rel_path: &str,
-    status: SyncStatus,
-    git: Option<GitStatus>,
-    published: Option<bool>,
-) -> Line<'static> {
+fn format_leaf(rel_path: &str, status: SyncStatus, git: Option<GitStatus>) -> Line<'static> {
     let basename = rel_path.rsplit('/').next().unwrap_or(rel_path);
     // Strip the last extension uniformly (.md, .json, …). The tree icon
     // already signals "this is a writing"; the extension is noise.
@@ -203,21 +193,11 @@ fn format_leaf(
         _ => (g.git_clean, Color::DarkGray),
     };
 
-    let mut spans = vec![
+    Line::from(vec![
         Span::raw(icon),
         Span::styled(format!("{git_glyph} "), Style::default().fg(git_color)),
         Span::styled(name.to_string(), Style::default().fg(status.color())),
-    ];
-    // Trailing publish badge: a file with a Google Doc copy carries a
-    // diamond; yellow means the local file moved on since the last publish.
-    if let Some(stale) = published {
-        let color = if stale { Color::Yellow } else { Color::Green };
-        spans.push(Span::styled(
-            format!(" {}", g.published),
-            Style::default().fg(color),
-        ));
-    }
-    Line::from(spans)
+    ])
 }
 
 fn format_directory(name: &str, counts: &[usize; 5]) -> Line<'static> {
@@ -279,7 +259,7 @@ mod tests {
     #[test]
     fn deep_paths_nest_recursively() {
         let files = vec![sf("a/b/c/d.md"), sf("a/b/c/e.md"), sf("a/f.md")];
-        let built = build_tree(&files, &HashMap::new(), &HashMap::new(), &HashMap::new());
+        let built = build_tree(&files, &HashMap::new(), &HashMap::new());
         // Top-level should have exactly one directory entry ("a"); identifiers
         // should include each directory level ("a", "a/b", "a/b/c").
         assert_eq!(built.items.len(), 1);
@@ -321,7 +301,7 @@ mod tests {
     #[test]
     fn root_level_files_appear_at_top() {
         let files = vec![sf("README.md"), sf("notes/today.md")];
-        let built = build_tree(&files, &HashMap::new(), &HashMap::new(), &HashMap::new());
+        let built = build_tree(&files, &HashMap::new(), &HashMap::new());
         assert!(built.file_ids.contains("README.md"));
         assert!(built.file_ids.contains("notes/today.md"));
     }

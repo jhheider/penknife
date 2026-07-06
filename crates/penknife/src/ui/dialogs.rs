@@ -82,10 +82,6 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("e", "Edit selected file in $EDITOR"),
                 ("m", "Rename / move the selected file"),
                 ("X", "Delete menu: remote gist, local file, or both"),
-                (
-                    "p",
-                    "Publish menu: Google Docs (publish/update/open/unpublish)",
-                ),
                 ("D", "Diff local vs remote"),
                 ("M", "Resolve ambiguous hydration matches"),
                 ("L", "Link selected file to an existing gist by URL/ID"),
@@ -94,7 +90,8 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
         (
             "Clipboard",
             &[
-                ("C", "Copy selected file's contents to clipboard"),
+                ("C", "Copy selected file's contents (markdown) to clipboard"),
+                ("p", "Copy as rich text (paste into Docs, email, Slack)"),
                 ("V", "Paste clipboard (rich HTML → markdown) as new file"),
             ],
         ),
@@ -940,64 +937,6 @@ pub fn render_git_menu(f: &mut Frame, area: Rect, selected: usize) {
         crate::app::GIT_MENU_LABELS,
         selected,
     );
-}
-
-pub fn render_publish_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {
-    let g = crate::glyphs::glyphs();
-    let opts = app.publish_options();
-    let labels: Vec<&str> = opts.iter().map(|o| o.label()).collect();
-    let file = app.selected_file().unwrap_or_default();
-    render_choice_menu(
-        f,
-        area,
-        &format!("{} Publish: {file}", g.info),
-        &labels,
-        selected,
-    );
-}
-
-/// The device-flow sign-in modal: show the code and URL, wait for approval.
-/// The poll runs in the background; this dialog just keeps the user company.
-pub fn render_gdoc_auth(f: &mut Frame, area: Rect, user_code: &str, verification_url: &str) {
-    let modal = centered(area, 56.min(area.width.saturating_sub(4)), 8);
-    f.render_widget(Clear, modal);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Google sign-in")
-        .border_style(Style::default().fg(Color::Yellow))
-        .title_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(modal);
-    f.render_widget(block, modal);
-
-    let dim = Style::default().fg(Color::DarkGray);
-    let lines = vec![
-        Line::raw(""),
-        Line::from(vec![
-            Span::styled("  Visit ", dim),
-            Span::styled(
-                verification_url.to_string(),
-                Style::default().fg(Color::Cyan),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("  and enter the code ", dim),
-            Span::styled(
-                user_code.to_string(),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::raw(""),
-        Line::styled("  (the page was opened in your browser)", dim),
-        Line::styled("  Waiting for approval... Esc cancels.", dim),
-    ];
-    f.render_widget(Paragraph::new(lines), inner);
 }
 
 pub fn render_bulk_menu(f: &mut Frame, area: Rect, app: &App, selected: usize) {

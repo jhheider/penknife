@@ -47,10 +47,9 @@ pub fn hints(mode: &Mode, focused_pane: PaneFocus) -> Vec<Hint> {
             vec![("Enter", "confirm"), ("Esc", "cancel")]
         }
         Mode::SetupRoot => vec![("Enter", "confirm"), ("Ctrl+Q", "quit")],
-        Mode::DeleteMenu { .. } | Mode::GitMenu { .. } | Mode::PublishMenu { .. } => {
+        Mode::DeleteMenu { .. } | Mode::GitMenu { .. } => {
             vec![("j/k", "select"), ("Enter", "choose"), ("Esc", "cancel")]
         }
-        Mode::GdocAuth { .. } => vec![("Esc", "cancel"), ("", "waiting for browser approval")],
         Mode::SearchQuery => vec![("Enter", "search"), ("Esc", "cancel")],
         Mode::SearchResults { .. } => vec![
             ("j/k", "select"),
@@ -154,11 +153,6 @@ mod tests {
             Mode::SearchResults { selected: 0 },
             Mode::DeleteMenu { selected: 0 },
             Mode::GitMenu { selected: 0 },
-            Mode::PublishMenu { selected: 0 },
-            Mode::GdocAuth {
-                user_code: "ABCD-EFGH".into(),
-                verification_url: "https://example.com".into(),
-            },
             Mode::ReplaceQuery,
             Mode::ReplaceTarget,
             Mode::ReplaceReview { selected: 0 },

@@ -366,6 +366,36 @@ impl App {
         }
     }
 
+    /// Copy the selected file rendered as HTML to the clipboard as rich text.
+    /// This is the zero-auth "share with someone who doesn't live in gists"
+    /// path: paste the result straight into a Google Doc, an email, Slack, or
+    /// any editor that accepts a rich paste, and it renders with headings,
+    /// bold, lists, and links intact. A plain-text alternative (the markdown
+    /// source) rides along so plain targets still get something sensible.
+    pub(crate) fn do_copy_rich(&mut self) {
+        let Some(rel) = self.selected_file() else {
+            self.status_message = "No file selected.".into();
+            return;
+        };
+        let abs = self.abs_path(&rel);
+        let markdown = match std::fs::read_to_string(&abs) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status_message = format!("Read error: {e}");
+                return;
+            }
+        };
+        let html = render_markdown_to_html(&markdown);
+        match arboard::Clipboard::new().and_then(|mut c| c.set().html(&html, Some(&markdown))) {
+            Ok(()) => {
+                self.status_message = format!("Copied {rel} as rich text (paste anywhere)");
+            }
+            Err(e) => {
+                self.status_message = format!("Clipboard error: {e}");
+            }
+        }
+    }
+
     /// Read the clipboard. If it has rich HTML (from a browser, doc editor,
     /// etc.), run it through htmd to produce markdown; otherwise fall back
     /// to plain text. Stash the result and prompt for a filename, reusing
@@ -690,5 +720,48 @@ impl App {
                 self.status_message = format!("Pruned {n} orphan(s).");
             }
         }
+    }
+}
+
+/// Render markdown to a standalone HTML fragment for the clipboard. Uses
+/// pulldown-cmark with the common extensions (tables, strikethrough, task
+/// lists, footnotes) so a rich paste keeps the structure a writer expects.
+fn render_markdown_to_html(markdown: &str) -> String {
+    use pulldown_cmark::{Options, Parser, html};
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+    options.insert(Options::ENABLE_FOOTNOTES);
+    let parser = Parser::new_ext(markdown, options);
+    let mut out = String::new();
+    html::push_html(&mut out, parser);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_markdown_to_html;
+
+    #[test]
+    fn renders_headings_and_emphasis() {
+        let html = render_markdown_to_html("# Title\n\nSome **bold** and *italic*.");
+        assert!(html.contains("<h1>Title</h1>"));
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<em>italic</em>"));
+    }
+
+    #[test]
+    fn renders_lists_and_links() {
+        let html = render_markdown_to_html("- a\n- b\n\n[x](https://e.com)");
+        assert!(html.contains("<ul>"));
+        assert!(html.contains("<li>a</li>"));
+        assert!(html.contains("href=\"https://e.com\""));
+    }
+
+    #[test]
+    fn renders_tables_via_extension() {
+        let html = render_markdown_to_html("| a | b |\n|---|---|\n| 1 | 2 |");
+        assert!(html.contains("<table>"));
     }
 }

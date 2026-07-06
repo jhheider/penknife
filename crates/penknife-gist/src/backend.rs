@@ -1,12 +1,9 @@
 //! [`penknife_backend::Backend`] implementation for GitHub Gists: the
-//! founding backend. Gists round-trip text losslessly, so this is a
-//! [`BackendKind::Sync`] backend and pull is safe.
+//! founding backend. Gists round-trip text losslessly, so pull is safe.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use penknife_backend::{
-    Backend, BackendError, BackendKind, RemoteChange, RemoteDoc, RemoteRef, Result,
-};
+use penknife_backend::{Backend, BackendError, RemoteChange, RemoteDoc, RemoteRef, Result};
 
 use crate::client::GistClient;
 use crate::error::GistError;
@@ -22,10 +19,6 @@ fn map_err(e: GistError) -> BackendError {
 impl Backend for GistClient {
     fn name(&self) -> &'static str {
         "gist"
-    }
-
-    fn kind(&self) -> BackendKind {
-        BackendKind::Sync
     }
 
     async fn create(&self, filename: &str, content: &str, description: &str) -> Result<RemoteRef> {
@@ -126,7 +119,6 @@ mod tests {
         // Dispatch through the trait object, exactly as penknife will.
         let backend: &dyn Backend = &client;
         assert_eq!(backend.name(), "gist");
-        assert_eq!(backend.kind(), BackendKind::Sync);
         let doc = backend.read("abc", "post.md").await.unwrap();
         assert_eq!(doc.content, "hello");
         assert!(doc.revision.is_some());

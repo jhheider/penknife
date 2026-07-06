@@ -32,8 +32,6 @@ impl App {
             Mode::BulkMenu { .. } => self.handle_bulk_menu_key(key),
             Mode::DeleteMenu { .. } => self.handle_delete_menu_key(key),
             Mode::GitMenu { .. } => self.handle_git_menu_key(key),
-            Mode::PublishMenu { .. } => self.handle_publish_menu_key(key),
-            Mode::GdocAuth { .. } => self.handle_gdoc_auth_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -99,7 +97,7 @@ impl App {
                 self.start_bulk_menu();
             }
             KeyCode::Char('g') => self.open_git_menu(),
-            KeyCode::Char('p') => self.open_publish_menu(),
+            KeyCode::Char('p') => self.do_copy_rich(),
             KeyCode::Char('s') => self.start_replace(),
             KeyCode::Char('f') => self.start_search(),
             KeyCode::Char('M') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -263,13 +261,6 @@ impl App {
                 } => self.do_delete_remote(rel_path, root, remote_id),
                 ConfirmAction::TrashLocal { rel_path, root } => {
                     self.do_trash_local(rel_path, root);
-                }
-                ConfirmAction::GdocUnpublish {
-                    rel_path,
-                    root,
-                    remote_id,
-                } => {
-                    self.do_gdoc_unpublish(rel_path, root, remote_id);
                 }
                 ConfirmAction::DeleteBoth {
                     rel_path,
@@ -514,47 +505,6 @@ impl App {
                 }
             }
             _ => {}
-        }
-    }
-
-    fn handle_publish_menu_key(&mut self, key: KeyEvent) {
-        let Mode::PublishMenu { selected } = self.mode else {
-            return;
-        };
-        let opts = self.publish_options();
-        let max = opts.len().saturating_sub(1);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.mode = Mode::PublishMenu {
-                    selected: (selected + 1).min(max),
-                };
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.mode = Mode::PublishMenu {
-                    selected: selected.saturating_sub(1),
-                };
-            }
-            KeyCode::Enter => {
-                let Some(choice) = opts.get(selected).copied() else {
-                    self.mode = Mode::Normal;
-                    return;
-                };
-                self.run_publish_choice(choice);
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_gdoc_auth_key(&mut self, key: KeyEvent) {
-        if key.code == KeyCode::Esc {
-            // Abort the poll task; the device code dies on Google's side.
-            if let Some(h) = self.gdoc_auth_abort.take() {
-                h.abort();
-            }
-            self.pending_publish = None;
-            self.mode = Mode::Normal;
-            self.status_message = "Google sign-in cancelled.".into();
         }
     }
 

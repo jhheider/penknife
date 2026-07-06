@@ -7,19 +7,6 @@ use tokio::sync::mpsc;
 use crate::hydrate::{AmbiguousMatch, HydrationProgress};
 use crate::store::Store;
 
-/// Payload of a successful Google Docs publish: everything the store needs
-/// to record (or refresh) the file's gdoc copy.
-#[derive(Debug)]
-pub struct GdocPublishData {
-    pub remote_id: String,
-    pub url: String,
-    pub revision: Option<chrono::DateTime<chrono::Utc>>,
-    /// SHA-256 of the markdown that was sent; both sides of the copy record
-    /// it (publish backends have no meaningful remote hash).
-    pub content_sha: String,
-    pub updated: bool,
-}
-
 /// Payload of a successful gist-import fetch: the file's markdown content,
 /// the gist's filename (prefills the save-as prompt), and the ready-made
 /// store entry (import means local == remote, i.e. born synced).
@@ -102,25 +89,6 @@ pub enum AsyncEvent {
     /// Gist import fetch result: content plus the mapping to record once the
     /// file is saved locally.
     GistImportFetched(std::result::Result<GistImportData, String>),
-    /// Google sign-in required: show the device-flow code and URL.
-    GdocAuthPrompt {
-        user_code: String,
-        verification_url: String,
-    },
-    /// Device flow finished (user approved, denied, or the code expired).
-    GdocAuthDone(std::result::Result<(), String>),
-    /// A Google Docs publish (create or update) finished.
-    GdocPublishDone {
-        root: PathBuf,
-        rel_path: String,
-        result: std::result::Result<GdocPublishData, String>,
-    },
-    /// A Google Docs unpublish (Doc deletion) finished.
-    GdocUnpublishDone {
-        root: PathBuf,
-        rel_path: String,
-        result: std::result::Result<(), String>,
-    },
     /// Remote gist deletion completed
     DeleteDone {
         root: PathBuf,
