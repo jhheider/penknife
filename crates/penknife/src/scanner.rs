@@ -3,7 +3,7 @@ use std::time::SystemTime;
 
 use globset::GlobSet;
 
-use crate::error::Result;
+use anyhow::Result;
 
 /// A rel_path in canonical form: path components joined with `/` on every
 /// platform. Store keys and the tree's nesting both split on `/`, so a Windows

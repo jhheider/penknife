@@ -32,9 +32,8 @@ toml = "1.1"
 globset = "0.4"
 unicode-width = "0.2"
 chrono = { workspace = true, features = ["serde"] }
-thiserror = { workspace = true }
-color-eyre = "0.6"
 reqwest = { workspace = true, features = ["json"] }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

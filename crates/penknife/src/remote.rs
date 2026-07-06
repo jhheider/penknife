@@ -11,9 +11,9 @@ use std::collections::{BTreeMap, HashMap};
 use chrono::{DateTime, Utc};
 use penknife_gist::GistClient;
 
-use crate::error::Result;
 use crate::store::FileEntry;
 use crate::sync::sha256_hex;
+use anyhow::Result;
 
 #[derive(Debug)]
 pub struct RemoteCheckOutcome {

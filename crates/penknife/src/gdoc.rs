@@ -1,4 +1,4 @@
-use crate::error::{PkError, Result};
+use anyhow::{Context, Result, bail};
 
 /// Extract a Google Doc ID from a URL like
 /// `https://docs.google.com/document/d/{ID}/edit`
@@ -20,19 +20,16 @@ pub async fn fetch_doc_markdown(doc_id: &str) -> Result<String> {
     let url = format!("https://docs.google.com/document/d/{doc_id}/export?format=md");
     let resp = reqwest::get(&url)
         .await
-        .map_err(|e| PkError::Other(format!("Failed to fetch Google Doc: {e}")))?;
+        .context("Failed to fetch Google Doc")?;
 
     if !resp.status().is_success() {
-        return Err(PkError::Other(format!(
+        bail!(
             "Google Doc export failed (HTTP {}). Is the doc link-accessible?",
             resp.status()
-        )));
+        );
     }
 
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| PkError::Other(format!("Failed to read response: {e}")))?;
+    let text = resp.text().await.context("Failed to read response")?;
     Ok(text)
 }
 

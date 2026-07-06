@@ -60,7 +60,7 @@ impl App {
         }
     }
 
-    pub fn refresh_files(&mut self) -> crate::error::Result<()> {
+    pub fn refresh_files(&mut self) -> anyhow::Result<()> {
         if let Some(entry) = self.current_root_entry().cloned() {
             // Surface a missing root explicitly. Without this check the
             // scanner silently returns an empty list (its error tolerance is

@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::error::Result;
+use anyhow::Result;
 
 /// Backend name for GitHub Gists, the founding backend. Matches
 /// `penknife_backend::Backend::name()` for the gist implementation.

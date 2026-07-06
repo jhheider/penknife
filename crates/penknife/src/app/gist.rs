@@ -929,8 +929,7 @@ async fn build_link_entry(
     remote_id: &str,
     local_filename: &str,
     local_content: &str,
-) -> crate::error::Result<FileEntry> {
-    use crate::error::PkError;
+) -> anyhow::Result<FileEntry> {
     let gist = client.get(remote_id).await?;
     // Prefer the gist file whose name matches the local basename; fall back to
     // the sole file in a single-file gist. A multi-file gist with no name
@@ -940,14 +939,14 @@ async fn build_link_entry(
     } else if gist.files.len() == 1 {
         gist.files.keys().next().cloned().expect("len==1 has a key")
     } else if gist.files.is_empty() {
-        return Err(PkError::Other(format!("Gist {remote_id} has no files.")));
+        anyhow::bail!("Gist {remote_id} has no files.");
     } else {
         let names: Vec<&str> = gist.files.keys().map(|s| s.as_str()).collect();
-        return Err(PkError::Other(format!(
+        anyhow::bail!(
             "Gist {remote_id} has multiple files ({}); none named '{local_filename}'. \
              Rename the local file to match one, or link via a single-file gist.",
             names.join(", ")
-        )));
+        );
     };
     let remote_content = client
         .file_content(&gist, &chosen)
