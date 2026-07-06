@@ -1,9 +1,24 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use globset::GlobSet;
 
 use crate::error::Result;
+
+/// A rel_path in canonical form: path components joined with `/` on every
+/// platform. Store keys and the tree's nesting both split on `/`, so a Windows
+/// `\` separator must be normalized. A literal backslash inside a Unix
+/// filename is preserved, because there it is part of a component, not a
+/// separator.
+pub fn rel_to_string(rel: &Path) -> String {
+    rel.components()
+        .filter_map(|c| match c {
+            Component::Normal(part) => Some(part.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
 #[derive(Debug, Clone)]
 pub struct ScannedFile {
@@ -51,11 +66,7 @@ fn walk_dir(root: &Path, dir: &Path, ignore: &GlobSet, out: &mut Vec<ScannedFile
         if path.is_dir() {
             // Test the directory's rel_path against ignore patterns first -
             // skipping a dir avoids descending into a potentially large tree.
-            let rel = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
+            let rel = rel_to_string(path.strip_prefix(root).unwrap_or(&path));
             if ignore.is_match(&rel) {
                 continue;
             }
@@ -70,11 +81,7 @@ fn walk_dir(root: &Path, dir: &Path, ignore: &GlobSet, out: &mut Vec<ScannedFile
             .and_then(|e| e.to_str())
             .is_some_and(is_supported_ext)
         {
-            let rel = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
+            let rel = rel_to_string(path.strip_prefix(root).unwrap_or(&path));
             if ignore.is_match(&rel) {
                 continue;
             }
@@ -110,4 +117,19 @@ pub fn build_globset(patterns: &[String]) -> GlobSet {
         }
     }
     builder.build().unwrap_or_else(|_| GlobSet::empty())
+}
+
+#[cfg(test)]
+mod rel_tests {
+    use super::rel_to_string;
+    use std::path::Path;
+
+    #[test]
+    fn rel_to_string_joins_components_with_forward_slash() {
+        // Built from components so the input uses the native separator; the
+        // output is `/`-joined on every platform.
+        let p: std::path::PathBuf = ["a", "b", "c.md"].iter().collect();
+        assert_eq!(rel_to_string(&p), "a/b/c.md");
+        assert_eq!(rel_to_string(Path::new("flat.md")), "flat.md");
+    }
 }

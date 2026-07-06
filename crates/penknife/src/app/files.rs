@@ -504,7 +504,7 @@ impl App {
         if let Some(entry) = self.pending_import_entry.take()
             && let Ok(rel) = path.strip_prefix(&root)
         {
-            let rel_path = rel.to_string_lossy().to_string();
+            let rel_path = crate::scanner::rel_to_string(rel);
             let gist_url = entry.url.clone();
             self.store.insert(&root, rel_path, entry);
             if let Err(e) = self.store.save() {

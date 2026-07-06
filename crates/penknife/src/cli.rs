@@ -523,7 +523,7 @@ fn resolve_file(config: &Config, target: &Path) -> Result<(PathBuf, String), i32
     for root in &config.roots {
         let canon_root = std::fs::canonicalize(&root.path).unwrap_or_else(|_| root.path.clone());
         if let Ok(rel) = canon.strip_prefix(&canon_root) {
-            return Ok((root.path.clone(), rel.to_string_lossy().to_string()));
+            return Ok((root.path.clone(), crate::scanner::rel_to_string(rel)));
         }
     }
     eprintln!(
