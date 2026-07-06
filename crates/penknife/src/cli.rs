@@ -67,6 +67,9 @@ pub enum Command {
         query: String,
         /// Directory to search (default: the current directory)
         path: Option<PathBuf>,
+        /// Match case-insensitively
+        #[arg(short = 'i', long = "ignore-case")]
+        ignore_case: bool,
         /// Print only the file paths that contain a match
         #[arg(short = 'l', long = "files-with-matches")]
         files_with_matches: bool,
@@ -122,6 +125,23 @@ pub enum Command {
         #[arg(short = 'q', long)]
         quiet: bool,
     },
+    /// Pull the gist's content down into the local file
+    ///
+    /// Needs a GitHub token with the 'gist' scope (run 'gh auth login').
+    Pull {
+        /// A markdown file under one of your watched folders
+        file: PathBuf,
+        /// Overwrite local changes that haven't been pushed
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show a unified diff of the local file against its gist
+    ///
+    /// Needs a GitHub token with the 'gist' scope (run 'gh auth login').
+    Diff {
+        /// A markdown file under one of your watched folders
+        file: PathBuf,
+    },
 }
 
 /// Run a one-shot subcommand and return its process exit code.
@@ -131,10 +151,11 @@ pub async fn run(command: Command) -> i32 {
         Command::Search {
             query,
             path,
+            ignore_case,
             files_with_matches,
             json,
             quiet,
-        } => run_search(query, path, files_with_matches, json, quiet),
+        } => run_search(query, path, ignore_case, files_with_matches, json, quiet),
         Command::Push { file, force } => run_push(file, force).await,
         Command::Url {
             file,
@@ -149,6 +170,8 @@ pub async fn run(command: Command) -> i32 {
             json,
             quiet,
         } => run_status(path, sync, porcelain, json, quiet).await,
+        Command::Pull { file, force } => run_pull(file, force).await,
+        Command::Diff { file } => run_diff(file).await,
     }
 }
 
@@ -216,6 +239,7 @@ fn read_source(file: Option<&str>) -> Result<(String, String), i32> {
 fn run_search(
     query: String,
     path: Option<PathBuf>,
+    ignore_case: bool,
     files_with_matches: bool,
     json: bool,
     quiet: bool,
@@ -227,7 +251,7 @@ fn run_search(
     }
     // rel_path in each match is relative to `dir`; join it back so printed
     // paths open from where the user invoked the search (grep semantics).
-    let matches = crate::replace::scan(&dir, &dir, &query);
+    let matches = crate::replace::scan_opts(&dir, &dir, &query, ignore_case);
     if matches.is_empty() {
         return EXIT_NEGATIVE;
     }
@@ -509,6 +533,88 @@ async fn run_status(
     }
 }
 
+async fn run_pull(file: PathBuf, force: bool) -> i32 {
+    let config = Config::load().unwrap_or_default();
+    let (root, rel) = match resolve_file(&config, &file) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let mut store = Store::load().unwrap_or_default();
+    let Some(entry) = store.get(&root, &rel).cloned() else {
+        eprintln!("penknife: {rel} is not published; nothing to pull.");
+        return EXIT_OPERATIONAL;
+    };
+    let local = std::fs::read_to_string(&file).unwrap_or_default();
+    // Drift guard: refuse to clobber unpushed local changes unless forced.
+    if !force {
+        let st = sync::local_status(&local, Some(&entry));
+        if matches!(st, SyncStatus::LocalNewer | SyncStatus::Conflict) {
+            eprintln!(
+                "penknife: {rel} has local changes that aren't on the gist; \
+                 pulling would overwrite them.\n  \
+                 Push them first, or use: penknife pull --force {}",
+                file.display()
+            );
+            return EXIT_NEGATIVE;
+        }
+    }
+    let token = match penknife_gist::auth::resolve_token() {
+        Ok(t) => t,
+        Err(_) => return no_token_error(),
+    };
+    let client = GistClient::new(token);
+    match sync::pull(&client, &entry, &basename(&rel)).await {
+        Ok((content, updated)) => {
+            if let Err(e) = std::fs::write(&file, &content) {
+                eprintln!("penknife: writing {}: {e}", file.display());
+                return EXIT_OPERATIONAL;
+            }
+            store.insert(&root, rel.clone(), updated);
+            eprintln!("penknife: pulled {rel}");
+            if let Err(e) = store.save() {
+                eprintln!("penknife: pulled, but saving local state failed: {e}");
+                return EXIT_OPERATIONAL;
+            }
+            EXIT_OK
+        }
+        Err(e) => report_gist_error(e),
+    }
+}
+
+async fn run_diff(file: PathBuf) -> i32 {
+    let config = Config::load().unwrap_or_default();
+    let (root, rel) = match resolve_file(&config, &file) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let store = Store::load().unwrap_or_default();
+    let Some(entry) = store.get(&root, &rel).cloned() else {
+        eprintln!("penknife: {rel} is not published; nothing to diff.");
+        return EXIT_OPERATIONAL;
+    };
+    let local = std::fs::read_to_string(&file).unwrap_or_default();
+    let token = match penknife_gist::auth::resolve_token() {
+        Ok(t) => t,
+        Err(_) => return no_token_error(),
+    };
+    let client = GistClient::new(token);
+    let full = match sync::full_status(&client, &local, &entry, &basename(&rel)).await {
+        Ok(f) => f,
+        Err(e) => return report_gist_error(e),
+    };
+    // diff(1) semantics: no output and exit 0 when identical, the diff and
+    // exit 1 when they differ.
+    if full.remote_content == local {
+        return EXIT_OK;
+    }
+    let diff = similar::TextDiff::from_lines(&full.remote_content, &local);
+    let (gist_label, local_label) = (format!("{rel} (gist)"), format!("{rel} (local)"));
+    let mut unified = diff.unified_diff();
+    unified.context_radius(3).header(&gist_label, &local_label);
+    print!("{unified}");
+    EXIT_NEGATIVE
+}
+
 /// Map a file path to (configured root, rel_path within it). The store keys on
 /// the root, so this is how a raw CLI path finds its gist entry. Errors (with
 /// the watched-folder list) when the file is under no configured root.
@@ -635,7 +741,14 @@ mod tests {
 
     #[test]
     fn search_missing_dir_is_operational() {
-        let code = run_search("x".into(), Some("/no/such/dir".into()), false, false, true);
+        let code = run_search(
+            "x".into(),
+            Some("/no/such/dir".into()),
+            false,
+            false,
+            false,
+            true,
+        );
         assert_eq!(code, EXIT_OPERATIONAL);
     }
 
