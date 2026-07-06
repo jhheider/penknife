@@ -1,4 +1,5 @@
 mod app;
+mod cli;
 mod config;
 mod error;
 mod event;
@@ -6,6 +7,7 @@ mod gdoc;
 mod git;
 mod glyphs;
 mod hydrate;
+mod markdown;
 mod picker;
 mod remote;
 mod replace;
@@ -19,6 +21,7 @@ use std::io;
 use std::panic;
 use std::time::Duration;
 
+use clap::Parser;
 use crossterm::ExecutableCommand;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, KeyEventKind};
 use crossterm::terminal::{
@@ -31,8 +34,12 @@ use event::{UiEvent, async_channel};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
-    if let Some(action) = parse_cli_args() {
-        return run_cli_action(action);
+    let args = cli::Cli::parse();
+    if args.config {
+        return edit_config();
+    }
+    if let Some(command) = args.command {
+        std::process::exit(cli::run(command));
     }
 
     // Panic hook: restore terminal before printing panic
@@ -101,69 +108,24 @@ async fn main() -> color_eyre::Result<()> {
     Ok(())
 }
 
-/// CLI sub-modes that complete before (or instead of) the TUI starts.
-enum CliAction {
-    Help,
-    Version,
-    EditConfig,
-}
-
-/// Parse a tiny argv vocabulary. Returns Some(action) if the caller asked
-/// for a one-shot CLI mode; None means "fall through to the TUI."
-fn parse_cli_args() -> Option<CliAction> {
-    let mut args = std::env::args().skip(1);
-    let first = args.next()?;
-    match first.as_str() {
-        "-h" | "--help" | "-?" => Some(CliAction::Help),
-        "-V" | "--version" => Some(CliAction::Version),
-        "-c" | "--config" => Some(CliAction::EditConfig),
-        other => {
-            eprintln!("penknife: unknown argument: {other}");
-            eprintln!("Run with --help to see options.");
-            std::process::exit(2);
-        }
+/// Open the config file in `$EDITOR` and exit (the `-c/--config` flag).
+fn edit_config() -> color_eyre::Result<()> {
+    let path = config::Config::config_path();
+    // Ensure the file exists (and the parent dir) so the editor has something
+    // to open. If we have saved state, leave it alone; otherwise drop a
+    // minimal scaffold the user can edit.
+    if !path.exists() {
+        let cfg = config::Config::load()?;
+        cfg.save()?;
     }
-}
-
-fn run_cli_action(action: CliAction) -> color_eyre::Result<()> {
-    match action {
-        CliAction::Help => {
-            println!(
-                "penknife - git-style remotes for your documents\n\n\
-                 USAGE:\n  \
-                 penknife [FLAGS]\n\n\
-                 FLAGS:\n  \
-                 -h, --help, -?    Show this message\n  \
-                 -V, --version     Print version\n  \
-                 -c, --config      Open the config file in $EDITOR and exit\n\n\
-                 With no flags, launches the TUI. See the help screen inside the\n\
-                 app (press `?`) for the full keybinding reference."
-            );
-            Ok(())
-        }
-        CliAction::Version => {
-            println!("penknife {}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
-        CliAction::EditConfig => {
-            let path = config::Config::config_path();
-            // Ensure the file exists (and the parent dir) so the editor has
-            // something to open. If we have any saved state, leave it alone;
-            // otherwise drop a minimal scaffold the user can edit.
-            if !path.exists() {
-                let cfg = config::Config::load()?;
-                cfg.save()?;
-            }
-            let editor = std::env::var("EDITOR")
-                .or_else(|_| std::env::var("VISUAL"))
-                .unwrap_or_else(|_| "vi".to_string());
-            let status = std::process::Command::new(&editor).arg(&path).status()?;
-            if !status.success() {
-                eprintln!("{editor} exited with status {status}");
-            }
-            Ok(())
-        }
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+    let status = std::process::Command::new(&editor).arg(&path).status()?;
+    if !status.success() {
+        eprintln!("{editor} exited with status {status}");
     }
+    Ok(())
 }
 
 /// Suspend the TUI (leave alt screen, drop raw mode, release mouse capture),
