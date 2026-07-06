@@ -33,7 +33,8 @@ Ordered by intent, not by promise:
 1. ~~**Polling.**~~ Done: remote poll on a timer, local filesystem sweep, auto-hydrate at startup. The manual check/refresh/hydrate keys retired when their jobs became automatic.
 2. ~~**Backend trait.**~~ Done: `penknife-backend` is a small internal seam so the sync engine, polling, and store don't hard-code GitHub. Gists are the only backend; the trait keeps the door open without advertising a hallway.
 3. ~~**Copy as rich text.**~~ Done: `p` renders the file to HTML and puts it on the clipboard for a paste into any rich editor.
-4. **First public release**: tag, prebuilt binaries, a demo GIF, crates.io.
+4. ~~**First public release.**~~ Done (v0.1.0): tag, prebuilt binaries, crates.io, a Homebrew tap.
+5. ~~**Headless CLI.**~~ Done (v0.2.0): `render`, `search`, `push`, `url`, `status` so penknife composes with editors and scripts, not just the full-screen app.
 
 Explicitly declined: **Google Docs / Notion publish and any other OAuth or token-setup backend** (friction that fights the product; the share job is a rich-text paste), Medium (API discontinued), Telegraph, paste services, plugin systems, git porcelain beyond the basics, team merge workflows, bidirectional sync for any lossy format.
 
