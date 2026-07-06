@@ -108,6 +108,31 @@ With a GitHub token, these light up too:
 
 There's also a git menu (`g`) when your folder is a git repository, a sort menu (`O`), and a bulk-actions menu (`B`).
 
+## Command line
+
+Bare `penknife` launches the app; a subcommand runs one operation and exits, so penknife composes with your editor and scripts.
+
+No account needed:
+
+```bash
+penknife render notes.md              # markdown to HTML on stdout
+cat notes.md | penknife render -      # a Unix filter
+penknife render -s notes.md > out.html   # -s wraps a full HTML document
+penknife search "grapple"             # find in files, grep-style (exit 1 on no match)
+```
+
+With a GitHub token (the same one the app uses):
+
+```bash
+penknife push notes.md                # publish or update the gist, print its URL
+penknife url notes.md --clip          # print the shareable URL and copy it
+penknife status                       # per-file drift, offline and instant
+penknife status --sync                # check GitHub live
+penknife status --porcelain           # machine form for a shell prompt or hook
+```
+
+Each command prints its payload to stdout and everything else to stderr, and its exit code is meaningful (0 ok, 1 nothing-to-report or drifted, 2 usage, 3 auth, 4 file under no watched folder, 5 error). So `url=$(penknife push x.md)` captures a clean URL, and a `penknife status -q` pre-commit hook fails only when something drifted. Run `penknife --help` (or `penknife <command> --help`) for the rest.
+
 ## Configuration
 
 `penknife --config` opens your config file in `$EDITOR`. It lives (with a small state file) in your platform data directory: `~/Library/Application Support/penknife` on macOS, `~/.local/share/penknife` on Linux.
