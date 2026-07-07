@@ -300,6 +300,226 @@ mod tests {
         assert_eq!(truncate_path_for_title("a/b.md", 20), "a/b.md");
     }
 
+    mod render {
+        use super::super::draw;
+        use crate::app::test_support::{new_for_test, select, write_file};
+        use crate::app::{App, Mode};
+        use crate::event::async_channel;
+        use crate::hydrate::{AmbiguousMatch, GistCandidate};
+        use crate::replace::ReplaceMatch;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use tempfile::TempDir;
+
+        fn make_app() -> (TempDir, App) {
+            let dir = tempfile::tempdir().unwrap();
+            write_file(dir.path(), "a.md", "# alpha\n\nbody");
+            write_file(dir.path(), "sub/c.md", "gamma");
+            let (tx, rx) = async_channel();
+            std::mem::forget(rx);
+            let mut app = new_for_test(dir.path(), tx);
+            select(&mut app, "a.md");
+            (dir, app)
+        }
+
+        /// Render `app` at `w`x`h` and return the rendered text, asserting the
+        /// draw did not panic.
+        fn render_at(app: &mut App, w: u16, h: u16) -> String {
+            let backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|f| draw(f, app)).unwrap();
+            let buf = terminal.backend().buffer().clone();
+            buf.content().iter().map(|c| c.symbol()).collect::<String>()
+        }
+
+        fn render(app: &mut App) -> String {
+            render_at(app, 100, 30)
+        }
+
+        fn ambiguous(app: &mut App) {
+            app.pending_ambiguous.push(AmbiguousMatch {
+                local_path: "a.md".into(),
+                local_hash: "h".into(),
+                candidates: vec![GistCandidate {
+                    remote_id: "g1".into(),
+                    url: "https://gist.github.com/u/g1".into(),
+                    description: Some("desc".into()),
+                    size: 12,
+                }],
+            });
+        }
+
+        fn matches(app: &mut App) -> Vec<ReplaceMatch> {
+            vec![
+                ReplaceMatch {
+                    abs_path: app.abs_path("a.md"),
+                    rel_path: "a.md".into(),
+                    line: 1,
+                    col_byte: 2,
+                    line_text: "# alpha".into(),
+                },
+                ReplaceMatch {
+                    abs_path: app.abs_path("sub/c.md"),
+                    rel_path: "sub/c.md".into(),
+                    line: 1,
+                    col_byte: 0,
+                    line_text: "gamma".into(),
+                },
+            ]
+        }
+
+        #[test]
+        fn draws_normal_with_preview() {
+            let (_d, mut app) = make_app();
+            let out = render(&mut app);
+            assert!(out.contains("Files"));
+            assert!(out.contains("Preview"));
+        }
+
+        #[test]
+        fn draws_help() {
+            let (_d, mut app) = make_app();
+            app.mode = Mode::Help;
+            let out = render(&mut app);
+            assert!(out.contains("Help") || out.contains("Keybindings") || out.contains("keys"));
+        }
+
+        #[test]
+        fn draws_file_picker() {
+            let (_d, mut app) = make_app();
+            app.handle_key(crate::app::test_support::ch('/'));
+            let out = render(&mut app);
+            assert!(!out.trim().is_empty());
+        }
+
+        #[test]
+        fn draws_confirm() {
+            let (_d, mut app) = make_app();
+            app.mode = Mode::Confirm {
+                message: "Really do the thing?".into(),
+                action: crate::app::ConfirmAction::SyncDown,
+            };
+            let out = render(&mut app);
+            assert!(out.contains("Really do the thing"));
+        }
+
+        #[test]
+        fn draws_message() {
+            let (_d, mut app) = make_app();
+            app.mode = Mode::Message("something happened".into());
+            let out = render(&mut app);
+            assert!(out.contains("something happened"));
+        }
+
+        #[test]
+        fn draws_input_dialogs() {
+            let (_d, mut app) = make_app();
+            for mode in [
+                Mode::GdocUrl,
+                Mode::GdocFilename,
+                Mode::SearchQuery,
+                Mode::ReplaceQuery,
+                Mode::ReplaceTarget,
+                Mode::Rename {
+                    old_rel: "a.md".into(),
+                },
+                Mode::LinkGist {
+                    rel_path: "a.md".into(),
+                },
+            ] {
+                app.mode = mode;
+                let out = render(&mut app);
+                assert!(!out.trim().is_empty());
+            }
+        }
+
+        #[test]
+        fn draws_root_switcher_and_setup() {
+            let (_d, mut app) = make_app();
+            app.mode = Mode::RootSwitcher { selected: 0 };
+            assert!(!render(&mut app).trim().is_empty());
+            app.mode = Mode::AddRoot;
+            assert!(!render(&mut app).trim().is_empty());
+            app.mode = Mode::SetupRoot;
+            assert!(!render(&mut app).trim().is_empty());
+        }
+
+        #[test]
+        fn draws_resolve_ambiguous() {
+            let (_d, mut app) = make_app();
+            ambiguous(&mut app);
+            app.mode = Mode::ResolveAmbiguous {
+                item: 0,
+                selected: 0,
+            };
+            let out = render(&mut app);
+            assert!(!out.trim().is_empty());
+        }
+
+        #[test]
+        fn draws_search_results() {
+            let (_d, mut app) = make_app();
+            app.search_matches = matches(&mut app);
+            app.mode = Mode::SearchResults { selected: 0 };
+            let out = render(&mut app);
+            assert!(!out.trim().is_empty());
+        }
+
+        #[test]
+        fn draws_replace_review() {
+            let (_d, mut app) = make_app();
+            app.replace_matches = matches(&mut app);
+            app.replace_checked = vec![true, false];
+            app.replace_query = "a".into();
+            app.replace_target = "b".into();
+            app.mode = Mode::ReplaceReview { selected: 0 };
+            let out = render(&mut app);
+            assert!(!out.trim().is_empty());
+        }
+
+        #[test]
+        fn draws_menus() {
+            let (_d, mut app) = make_app();
+            for mode in [
+                Mode::SortMenu { selected: 0 },
+                Mode::BulkMenu { selected: 0 },
+                Mode::DeleteMenu { selected: 0 },
+                Mode::GitMenu { selected: 0 },
+            ] {
+                app.mode = mode;
+                assert!(!render(&mut app).trim().is_empty());
+            }
+        }
+
+        #[test]
+        fn draws_diff() {
+            let (_d, mut app) = make_app();
+            app.mode = Mode::Diff {
+                local: "line one\nline two".into(),
+                remote: "line one\nline three".into(),
+            };
+            let out = render(&mut app);
+            assert!(out.contains("Diff"));
+        }
+
+        #[test]
+        fn draws_in_tiny_area_without_panic() {
+            let (_d, mut app) = make_app();
+            // Absurdly small terminals must not panic the renderer.
+            for (w, h) in [(4u16, 3u16), (1, 1), (10, 4)] {
+                let _ = render_at(&mut app, w, h);
+                app.mode = Mode::Help;
+                let _ = render_at(&mut app, w, h);
+                app.mode = Mode::Confirm {
+                    message: "x".into(),
+                    action: crate::app::ConfirmAction::SyncDown,
+                };
+                let _ = render_at(&mut app, w, h);
+                app.mode = Mode::Normal;
+            }
+        }
+    }
+
     #[test]
     fn long_paths_get_front_ellipsized() {
         let out = truncate_path_for_title("very/long/path/to/file.md", 10);

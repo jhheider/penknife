@@ -730,3 +730,295 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::ConfirmAction;
+    use crate::app::test_support::{guard, new_for_test, select, write_file};
+    use crate::event::async_channel;
+    use crate::store::{FileEntry, GIST_BACKEND};
+    use tempfile::TempDir;
+
+    fn app3() -> (TempDir, App, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "a.md", "alpha alpha");
+        write_file(dir.path(), "b.md", "beta");
+        write_file(dir.path(), "sub/c.md", "gamma alpha");
+        let (tx, rx) = async_channel();
+        std::mem::forget(rx);
+        let app = new_for_test(dir.path(), tx);
+        let root = app.active_root_path().unwrap();
+        (dir, app, root)
+    }
+
+    fn entry(id: &str) -> FileEntry {
+        FileEntry {
+            backend: GIST_BACKEND.into(),
+            remote_id: id.into(),
+            url: format!("https://gist.github.com/u/{id}"),
+            local_sha256: "x".into(),
+            remote_sha256: "x".into(),
+            last_synced: chrono::Utc::now(),
+            remote_updated_at: None,
+        }
+    }
+
+    // ── do_rename ───────────────────────────────────────────────────────
+
+    #[test]
+    fn rename_moves_file_on_disk() {
+        let (_d, mut app, root) = app3();
+        app.do_rename("a.md".into(), "renamed.md".into());
+        assert!(!root.join("a.md").exists());
+        assert!(root.join("renamed.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(root.join("renamed.md")).unwrap(),
+            "alpha alpha"
+        );
+    }
+
+    #[test]
+    fn rename_empty_is_cancelled() {
+        let (_d, mut app, root) = app3();
+        app.do_rename("a.md".into(), String::new());
+        assert!(app.status_message.contains("Empty filename"));
+        assert!(root.join("a.md").exists());
+    }
+
+    #[test]
+    fn rename_no_change_is_cancelled() {
+        let (_d, mut app, _root) = app3();
+        app.do_rename("a.md".into(), "a.md".into());
+        assert!(app.status_message.contains("No change"));
+    }
+
+    #[test]
+    fn rename_rejects_traversal_and_absolute() {
+        let (_d, mut app, _root) = app3();
+        app.do_rename("a.md".into(), "../evil.md".into());
+        assert!(app.status_message.contains("must be a relative path"));
+        app.do_rename("a.md".into(), "/etc/evil.md".into());
+        assert!(app.status_message.contains("must be a relative path"));
+    }
+
+    #[test]
+    fn rename_rejects_existing_target() {
+        let (_d, mut app, _root) = app3();
+        app.do_rename("a.md".into(), "b.md".into());
+        assert!(app.status_message.contains("Target exists"));
+    }
+
+    #[test]
+    fn rename_moves_store_entry_no_token() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.store.insert(&root, "a.md".into(), entry("g1"));
+        app.do_rename("a.md".into(), "renamed.md".into());
+        // Store key moved with the file.
+        assert!(app.store.get(&root, "a.md").is_none());
+        assert_eq!(app.store.get(&root, "renamed.md").unwrap().remote_id, "g1");
+        // No token => the remote update is skipped with a note.
+        assert!(app.status_message.contains("no token"));
+    }
+
+    // ── search / replace scans ──────────────────────────────────────────
+
+    #[test]
+    fn search_scan_finds_matches() {
+        let (_d, mut app, _root) = app3();
+        app.search_query = "alpha".into();
+        app.run_search_scan();
+        assert!(matches!(app.mode, Mode::SearchResults { .. }));
+        // "alpha" appears in a.md (twice) and sub/c.md (once).
+        assert_eq!(app.search_matches.len(), 3);
+    }
+
+    #[test]
+    fn search_scan_no_matches_returns_normal() {
+        let (_d, mut app, _root) = app3();
+        app.search_query = "zzznope".into();
+        app.run_search_scan();
+        assert!(matches!(app.mode, Mode::Normal));
+        assert!(app.status_message.contains("No matches"));
+    }
+
+    #[test]
+    fn replace_scan_populates_review() {
+        let (_d, mut app, _root) = app3();
+        app.replace_query = "alpha".into();
+        app.run_replace_scan();
+        assert!(matches!(app.mode, Mode::ReplaceReview { .. }));
+        assert_eq!(app.replace_matches.len(), 3);
+        // All matches start checked.
+        assert!(app.replace_checked.iter().all(|c| *c));
+    }
+
+    #[test]
+    fn apply_replace_rewrites_checked_matches() {
+        let (_d, mut app, root) = app3();
+        app.replace_query = "alpha".into();
+        app.run_replace_scan();
+        app.replace_target = "omega".into();
+        app.apply_replace();
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "omega omega"
+        );
+        assert!(app.status_message.contains("Replaced"));
+    }
+
+    #[test]
+    fn apply_replace_nothing_checked_no_op() {
+        let (_d, mut app, root) = app3();
+        app.replace_query = "alpha".into();
+        app.run_replace_scan();
+        app.replace_target = "omega".into();
+        for c in app.replace_checked.iter_mut() {
+            *c = false;
+        }
+        app.apply_replace();
+        assert!(app.status_message.contains("Nothing checked"));
+        // File untouched.
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "alpha alpha"
+        );
+    }
+
+    #[test]
+    fn replace_scope_label_root_when_nothing_selected() {
+        let (_d, app, _root) = app3();
+        assert_eq!(app.replace_scope_label(), "(root)");
+    }
+
+    #[test]
+    fn replace_scope_label_parent_dir_of_selected() {
+        let (_d, mut app, _root) = app3();
+        select(&mut app, "sub/c.md");
+        assert_eq!(app.replace_scope_label(), "sub");
+    }
+
+    // ── bulk_options ────────────────────────────────────────────────────
+
+    #[test]
+    fn bulk_options_counts_dirty_and_orphans() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        // An orphan: a store entry with no matching file.
+        app.store.insert(&root, "ghost.md".into(), entry("g9"));
+        app.refresh_status_cache();
+        let opts = app.bulk_options();
+        // PushAllDirty: all three real files are NotGisted.
+        assert_eq!(opts[0].count(), 3);
+        // PullAllRemoteNewer: none.
+        assert_eq!(opts[1].count(), 0);
+        // PruneOrphans: the ghost entry.
+        assert_eq!(opts[3].count(), 1);
+    }
+
+    #[test]
+    fn run_bulk_prune_orphans_removes_entries() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.run_bulk(BulkAction::PruneOrphans {
+            rels: vec!["ghost.md".into()],
+        });
+        // (nothing to remove, but the path executes and reports)
+        assert!(app.status_message.contains("Pruned"));
+        // Add a real orphan and prune it.
+        app.store.insert(&root, "ghost.md".into(), entry("g9"));
+        app.run_bulk(BulkAction::PruneOrphans {
+            rels: vec!["ghost.md".into()],
+        });
+        assert!(app.store.get(&root, "ghost.md").is_none());
+    }
+
+    #[test]
+    fn run_bulk_format_json_pretty_prints() {
+        let (_d, mut app, root) = app3();
+        write_file(root.as_path(), "data.json", "{\"b\":1,\"a\":2}");
+        app.refresh_files().unwrap();
+        app.run_bulk(BulkAction::FormatAllJson {
+            rels: vec!["data.json".into()],
+        });
+        let out = std::fs::read_to_string(root.join("data.json")).unwrap();
+        // Pretty output spans multiple lines and ends in a newline.
+        assert!(out.contains('\n'));
+        assert!(out.ends_with('\n'));
+        assert!(app.status_message.contains("Formatted"));
+    }
+
+    // ── misc file ops ───────────────────────────────────────────────────
+
+    #[test]
+    fn do_request_edit_sets_pending_editor() {
+        let (_d, mut app, root) = app3();
+        select(&mut app, "a.md");
+        app.do_request_edit();
+        assert_eq!(
+            app.pending_editor.as_deref(),
+            Some(root.join("a.md").as_path())
+        );
+    }
+
+    #[test]
+    fn confirm_trash_local_opens_confirm() {
+        let (_d, mut app, _root) = app3();
+        select(&mut app, "a.md");
+        app.confirm_trash_local();
+        assert!(matches!(
+            app.mode,
+            Mode::Confirm {
+                action: ConfirmAction::TrashLocal { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn save_gdoc_import_writes_file() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.gdoc_content = Some("# Imported".into());
+        app.input_editor.content = "imported".into();
+        app.save_gdoc_import();
+        assert!(root.join("imported.md").exists());
+        assert!(app.status_message.contains("Saved"));
+    }
+
+    // ── git menu helpers ────────────────────────────────────────────────
+
+    #[test]
+    fn open_git_menu_without_repo_warns() {
+        let (_d, mut app, _root) = app3();
+        app.open_git_menu();
+        assert!(matches!(app.mode, Mode::Normal));
+        assert!(app.status_message.contains("not inside a git repository"));
+    }
+
+    #[test]
+    fn git_status_shells_out_when_in_repo() {
+        let (_d, mut app, root) = app3();
+        app.git_repo_root = Some(root);
+        app.do_git_status();
+        let cmd = app.pending_alias.expect("pending alias");
+        assert!(cmd.contains("git -C"));
+        assert!(cmd.contains("status"));
+    }
+
+    #[test]
+    fn git_pull_confirms_shell_command() {
+        let (_d, mut app, root) = app3();
+        app.git_repo_root = Some(root);
+        app.confirm_git_pull();
+        assert!(matches!(
+            app.mode,
+            Mode::Confirm {
+                action: ConfirmAction::RunShell { .. },
+                ..
+            }
+        ));
+    }
+}

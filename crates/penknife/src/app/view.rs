@@ -529,3 +529,314 @@ fn rect_contains(rect: &Rect, x: u16, y: u16) -> bool {
         && y >= rect.y
         && y < rect.y + rect.height
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::{new_for_test, select, write_file};
+    use crate::config::SortMode;
+    use crate::event::async_channel;
+    use crate::scanner::ScannedFile;
+    use crate::store::{FileEntry, GIST_BACKEND};
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent};
+    use std::path::PathBuf;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    fn app3() -> (tempfile::TempDir, App) {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "a.md", "alpha");
+        write_file(dir.path(), "b.md", "beta");
+        write_file(dir.path(), "sub/c.md", "gamma");
+        let (tx, rx) = async_channel();
+        std::mem::forget(rx);
+        let app = new_for_test(dir.path(), tx);
+        (dir, app)
+    }
+
+    fn sf(rel: &str, secs: u64) -> ScannedFile {
+        ScannedFile {
+            rel_path: rel.to_string(),
+            abs_path: PathBuf::from(format!("/x/{rel}")),
+            modified: UNIX_EPOCH + Duration::from_secs(secs),
+        }
+    }
+
+    fn synced_entry(content: &str) -> FileEntry {
+        let h = sync::sha256_hex(content);
+        FileEntry {
+            backend: GIST_BACKEND.into(),
+            remote_id: "g".into(),
+            url: "u".into(),
+            local_sha256: h.clone(),
+            remote_sha256: h,
+            last_synced: chrono::Utc::now(),
+            remote_updated_at: None,
+        }
+    }
+
+    // ── apply_sort ──────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_sort_mtime_desc_and_asc() {
+        let (_d, mut app) = app3();
+        app.files = vec![sf("old.md", 1), sf("new.md", 9), sf("mid.md", 5)];
+        app.config.sort.mode = SortMode::MtimeDesc;
+        app.apply_sort();
+        let order: Vec<_> = app.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert_eq!(order, vec!["new.md", "mid.md", "old.md"]);
+
+        app.config.sort.mode = SortMode::MtimeAsc;
+        app.apply_sort();
+        let order: Vec<_> = app.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert_eq!(order, vec!["old.md", "mid.md", "new.md"]);
+    }
+
+    #[test]
+    fn apply_sort_alpha_asc_and_desc() {
+        let (_d, mut app) = app3();
+        app.files = vec![sf("b.md", 1), sf("a.md", 2), sf("c.md", 3)];
+        app.config.sort.mode = SortMode::AlphaAsc;
+        app.apply_sort();
+        let order: Vec<_> = app.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert_eq!(order, vec!["a.md", "b.md", "c.md"]);
+
+        app.config.sort.mode = SortMode::AlphaDesc;
+        app.apply_sort();
+        let order: Vec<_> = app.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert_eq!(order, vec!["c.md", "b.md", "a.md"]);
+    }
+
+    #[test]
+    fn apply_sort_status_orders_by_rank() {
+        let (_d, mut app) = app3();
+        app.files = vec![
+            sf("synced.md", 1),
+            sf("conflict.md", 2),
+            sf("remote.md", 3),
+            sf("local.md", 4),
+        ];
+        app.status_cache.clear();
+        app.status_cache
+            .insert("synced.md".into(), sync::SyncStatus::Synced);
+        app.status_cache
+            .insert("conflict.md".into(), sync::SyncStatus::Conflict);
+        app.status_cache
+            .insert("remote.md".into(), sync::SyncStatus::RemoteNewer);
+        app.status_cache
+            .insert("local.md".into(), sync::SyncStatus::LocalNewer);
+        app.config.sort.mode = SortMode::Status;
+        app.apply_sort();
+        let order: Vec<_> = app.files.iter().map(|f| f.rel_path.as_str()).collect();
+        // Conflict(0) < LocalNewer(1) < RemoteNewer(2) < Synced(4).
+        assert_eq!(
+            order,
+            vec!["conflict.md", "local.md", "remote.md", "synced.md"]
+        );
+    }
+
+    // ── refresh_status_cache ────────────────────────────────────────────
+
+    #[test]
+    fn refresh_status_cache_defaults_to_not_gisted() {
+        let (_d, app) = app3();
+        // No store entries: everything is NotGisted.
+        assert_eq!(app.cached_status("a.md"), sync::SyncStatus::NotGisted);
+        assert_eq!(app.cached_status("unknown.md"), sync::SyncStatus::NotGisted);
+    }
+
+    #[test]
+    fn refresh_status_cache_reflects_store() {
+        let (_d, mut app) = app3();
+        let root = app.active_root_path().unwrap();
+        app.store
+            .insert(&root, "a.md".into(), synced_entry("alpha"));
+        // A gist whose recorded local hash differs from disk => LocalNewer.
+        app.store
+            .insert(&root, "b.md".into(), synced_entry("stale-content"));
+        app.refresh_status_cache();
+        assert_eq!(app.cached_status("a.md"), sync::SyncStatus::Synced);
+        assert_eq!(app.cached_status("b.md"), sync::SyncStatus::LocalNewer);
+        assert_eq!(app.cached_status("sub/c.md"), sync::SyncStatus::NotGisted);
+    }
+
+    #[test]
+    fn refresh_status_for_updates_single_entry() {
+        let (_d, mut app) = app3();
+        let root = app.active_root_path().unwrap();
+        app.store
+            .insert(&root, "a.md".into(), synced_entry("alpha"));
+        app.refresh_status_for("a.md");
+        assert_eq!(app.cached_status("a.md"), sync::SyncStatus::Synced);
+    }
+
+    // ── status_counts / update_status ───────────────────────────────────
+
+    #[test]
+    fn status_counts_tallies_all_buckets() {
+        let (_d, mut app) = app3();
+        app.status_cache.clear();
+        app.status_cache
+            .insert("a.md".into(), sync::SyncStatus::Synced);
+        app.status_cache
+            .insert("b.md".into(), sync::SyncStatus::Conflict);
+        // sub/c.md left out of the cache => counts as NotGisted.
+        let c = app.status_counts();
+        assert_eq!(c.synced, 1);
+        assert_eq!(c.conflict, 1);
+        assert_eq!(c.not_gisted, 1);
+    }
+
+    #[test]
+    fn update_status_dashboard_when_nothing_selected() {
+        let (_d, mut app) = app3();
+        // Nothing selected: status bar shows the root dashboard.
+        app.update_status();
+        assert!(!app.status_spans.is_empty());
+        // Three NotGisted files, no conflict => DarkGray dashboard color.
+        assert_eq!(app.status_color, Color::DarkGray);
+    }
+
+    #[test]
+    fn update_status_conflict_colors_red() {
+        let (_d, mut app) = app3();
+        app.status_cache
+            .insert("a.md".into(), sync::SyncStatus::Conflict);
+        app.update_status();
+        assert_eq!(app.status_color, Color::Red);
+    }
+
+    #[test]
+    fn update_status_selected_file_shows_path() {
+        let (_d, mut app) = app3();
+        select(&mut app, "a.md");
+        app.update_status();
+        assert!(app.status_message.contains("a.md"));
+        assert!(app.status_message.contains("no gist"));
+    }
+
+    // ── jump_to ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn jump_to_expands_ancestors_and_selects_leaf() {
+        let (_d, mut app) = app3();
+        app.focused_pane = PaneFocus::Right;
+        app.jump_to("sub/c.md");
+        assert_eq!(app.selected_file().as_deref(), Some("sub/c.md"));
+        // jump_to always refocuses the tree.
+        assert_eq!(app.focused_pane, PaneFocus::Tree);
+    }
+
+    // ── jump_to_next_dirty ──────────────────────────────────────────────
+
+    #[test]
+    fn jump_to_next_dirty_finds_dirty_file() {
+        let (_d, mut app) = app3();
+        // All three files are NotGisted (dirty). From no selection, forward
+        // lands on a file.
+        app.jump_to_next_dirty(true);
+        assert!(app.selected_file().is_some());
+    }
+
+    #[test]
+    fn jump_to_next_dirty_no_dirty_reports() {
+        let (_d, mut app) = app3();
+        // Mark every file Synced so nothing is dirty.
+        for f in ["a.md", "b.md", "sub/c.md"] {
+            app.status_cache.insert(f.into(), sync::SyncStatus::Synced);
+        }
+        app.jump_to_next_dirty(true);
+        assert_eq!(app.status_message, "No dirty files.");
+    }
+
+    #[test]
+    fn jump_to_next_dirty_wraps_backward() {
+        let (_d, mut app) = app3();
+        // Only one dirty file; make the rest Synced.
+        for f in ["a.md", "b.md", "sub/c.md"] {
+            app.status_cache.insert(f.into(), sync::SyncStatus::Synced);
+        }
+        // Pick the single dirty target deterministically.
+        app.config.sort.mode = SortMode::AlphaAsc;
+        app.rebuild_tree();
+        app.status_cache
+            .insert("b.md".into(), sync::SyncStatus::LocalNewer);
+        app.jump_to_next_dirty(false);
+        assert_eq!(app.selected_file().as_deref(), Some("b.md"));
+    }
+
+    // ── handle_mouse ────────────────────────────────────────────────────
+
+    fn mouse(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_scroll_over_right_pane_scrolls_preview() {
+        let (_d, mut app) = app3();
+        app.tree_pane_rect = Rect::new(0, 0, 10, 20);
+        app.right_pane_rect = Rect::new(10, 0, 30, 20);
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 20, 5));
+        assert_eq!(app.preview_scroll, 3);
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 20, 5));
+        assert_eq!(app.preview_scroll, 0);
+    }
+
+    #[test]
+    fn mouse_left_click_right_pane_focuses_right() {
+        let (_d, mut app) = app3();
+        app.tree_pane_rect = Rect::new(0, 0, 10, 20);
+        app.right_pane_rect = Rect::new(10, 0, 30, 20);
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 20, 5));
+        assert_eq!(app.focused_pane, PaneFocus::Right);
+    }
+
+    #[test]
+    fn mouse_scroll_over_tree_scrolls_tree_not_preview() {
+        let (_d, mut app) = app3();
+        app.tree_pane_rect = Rect::new(0, 0, 10, 20);
+        app.right_pane_rect = Rect::new(10, 0, 30, 20);
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 5));
+        // Preview untouched; tree pane handled the scroll.
+        assert_eq!(app.preview_scroll, 0);
+    }
+
+    // ── pure helpers ────────────────────────────────────────────────────
+
+    #[test]
+    fn status_rank_cached_orders_states() {
+        assert_eq!(status_rank_cached(Some(sync::SyncStatus::Conflict)), 0);
+        assert_eq!(status_rank_cached(Some(sync::SyncStatus::LocalNewer)), 1);
+        assert_eq!(status_rank_cached(Some(sync::SyncStatus::RemoteNewer)), 2);
+        assert_eq!(status_rank_cached(Some(sync::SyncStatus::NotGisted)), 3);
+        assert_eq!(status_rank_cached(Some(sync::SyncStatus::Synced)), 4);
+        // None sorts as NotGisted.
+        assert_eq!(status_rank_cached(None), 3);
+    }
+
+    #[test]
+    fn rect_contains_boundaries() {
+        let r = Rect::new(2, 3, 4, 5); // x:2..6, y:3..8
+        assert!(rect_contains(&r, 2, 3));
+        assert!(rect_contains(&r, 5, 7));
+        assert!(!rect_contains(&r, 6, 3)); // x == x+width is outside
+        assert!(!rect_contains(&r, 2, 8));
+        assert!(!rect_contains(&r, 1, 3));
+        // A zero-area rect contains nothing.
+        assert!(!rect_contains(&Rect::new(0, 0, 0, 0), 0, 0));
+    }
+
+    #[test]
+    fn scroll_right_pane_saturates_at_zero() {
+        let (_d, mut app) = app3();
+        app.preview_scroll = 2;
+        app.scroll_right_pane(5, false);
+        assert_eq!(app.preview_scroll, 0);
+        app.scroll_right_pane(4, true);
+        assert_eq!(app.preview_scroll, 4);
+    }
+}
