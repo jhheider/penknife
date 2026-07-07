@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use color_eyre::eyre::{Result, WrapErr, bail};
 
 /// Extract a Google Doc ID from a URL like
 /// `https://docs.google.com/document/d/{ID}/edit`
@@ -20,7 +20,7 @@ pub async fn fetch_doc_markdown(doc_id: &str) -> Result<String> {
     let url = format!("https://docs.google.com/document/d/{doc_id}/export?format=md");
     let resp = reqwest::get(&url)
         .await
-        .context("Failed to fetch Google Doc")?;
+        .wrap_err("Failed to fetch Google Doc")?;
 
     if !resp.status().is_success() {
         bail!(
@@ -29,7 +29,7 @@ pub async fn fetch_doc_markdown(doc_id: &str) -> Result<String> {
         );
     }
 
-    let text = resp.text().await.context("Failed to read response")?;
+    let text = resp.text().await.wrap_err("Failed to read response")?;
     Ok(text)
 }
 

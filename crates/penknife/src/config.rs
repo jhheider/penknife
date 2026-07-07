@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 
 /// A watched root directory, with optional per-root ignore patterns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,7 +161,7 @@ impl Config {
     pub fn save(&self) -> Result<()> {
         let dir = Self::data_dir();
         std::fs::create_dir_all(&dir)?;
-        let data = toml::to_string_pretty(self).context("toml serialize")?;
+        let data = toml::to_string_pretty(self).wrap_err("toml serialize")?;
         std::fs::write(Self::config_path(), data)?;
         Ok(())
     }

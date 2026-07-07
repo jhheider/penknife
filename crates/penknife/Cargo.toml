@@ -33,7 +33,7 @@ globset = "0.4"
 unicode-width = "0.2"
 chrono = { workspace = true, features = ["serde"] }
 reqwest = { workspace = true, features = ["json"] }
-anyhow = { workspace = true }
+color-eyre = "0.6.5"
 
 [dev-dependencies]
 tempfile = "3"

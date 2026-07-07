@@ -450,7 +450,7 @@ impl App {
 
         self.spawn_tracked(async move {
             let result = crate::gdoc::fetch_doc_markdown(&doc_id).await;
-            // `{e:#}` renders the whole anyhow chain (context + source) on one
+            // `{e:#}` renders the whole eyre chain (context + source) on one
             // line, so a network failure keeps its HTTP detail instead of
             // collapsing to just the "Failed to fetch Google Doc" context.
             let _ = tx.send(AsyncEvent::GdocFetched(

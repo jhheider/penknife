@@ -32,7 +32,8 @@ use app::App;
 use event::{UiEvent, async_channel};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
     let args = cli::Cli::parse();
     if args.config {
         return edit_config();
@@ -108,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Open the config file in `$EDITOR` and exit (the `-c/--config` flag).
-fn edit_config() -> anyhow::Result<()> {
+fn edit_config() -> color_eyre::Result<()> {
     let path = config::Config::config_path();
     // Ensure the file exists (and the parent dir) so the editor has something
     // to open. If we have saved state, leave it alone; otherwise drop a
@@ -135,7 +136,7 @@ fn suspend_and_edit(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     path: &std::path::Path,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
     let editor = std::env::var("EDITOR")
         .or_else(|_| std::env::var("VISUAL"))
         .unwrap_or_else(|_| "vi".to_string());
@@ -184,7 +185,7 @@ fn suspend_and_run_alias(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     cmd: &str,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
     let cwd = app.active_root_path();
 
     let had_mouse = app.mouse_capture;

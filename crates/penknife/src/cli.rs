@@ -659,7 +659,7 @@ fn no_token_error() -> i32 {
     EXIT_AUTH
 }
 
-fn report_gist_error(e: anyhow::Error) -> i32 {
+fn report_gist_error(e: color_eyre::eyre::Error) -> i32 {
     match e.downcast_ref::<GistError>() {
         Some(GistError::Api { status: 403, .. }) => {
             eprintln!(
@@ -784,19 +784,19 @@ mod tests {
         };
         assert_eq!(report_gist_error(server_err.into()), EXIT_OPERATIONAL);
         assert_eq!(
-            report_gist_error(anyhow::anyhow!("a local IO failure")),
+            report_gist_error(color_eyre::eyre::eyre!("a local IO failure")),
             EXIT_OPERATIONAL
         );
     }
 
     #[test]
     fn report_gist_error_sees_gist_error_through_context() {
-        use anyhow::Context;
+        use color_eyre::eyre::WrapErr;
         // A gist error wrapped in added context must still be classified by
         // its variant: the downcast walks the chain, so the 'gist'-scope hint
-        // survives even when a caller layers `.context()` on top.
+        // survives even when a caller layers `.wrap_err()` on top.
         let wrapped = Err::<(), _>(GistError::NoToken)
-            .context("while publishing")
+            .wrap_err("while publishing")
             .unwrap_err();
         assert_eq!(report_gist_error(wrapped), EXIT_AUTH);
     }
