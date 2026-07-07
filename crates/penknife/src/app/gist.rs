@@ -998,6 +998,510 @@ fn parse_gist_id(raw: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod handler_tests {
+    use super::super::App;
+    use super::scope_hint;
+    use crate::app::test_support::{guard, new_for_test, select, write_file};
+    use crate::app::{ConfirmAction, DeleteChoice, Mode};
+    use crate::event::{AsyncEvent, GistImportData, HydrationDoneData, async_channel};
+    use crate::hydrate::{AmbiguousMatch, GistCandidate};
+    use crate::remote::RemoteCheckOutcome;
+    use crate::store::{FileEntry, GIST_BACKEND, Store};
+    use crate::sync::{self, FullStatus, SyncStatus};
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn app3() -> (TempDir, App, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(dir.path(), "a.md", "alpha");
+        write_file(dir.path(), "b.md", "beta");
+        write_file(dir.path(), "sub/c.md", "gamma");
+        let (tx, rx) = async_channel();
+        std::mem::forget(rx);
+        let app = new_for_test(dir.path(), tx);
+        let root = app.active_root_path().unwrap();
+        (dir, app, root)
+    }
+
+    fn entry(id: &str, local: &str, remote: &str) -> FileEntry {
+        FileEntry {
+            backend: GIST_BACKEND.into(),
+            remote_id: id.into(),
+            url: format!("https://gist.github.com/u/{id}"),
+            local_sha256: local.into(),
+            remote_sha256: remote.into(),
+            last_synced: chrono::Utc::now(),
+            remote_updated_at: None,
+        }
+    }
+
+    // ── PushDone ────────────────────────────────────────────────────────
+
+    #[test]
+    fn push_done_ok_inserts_entry_and_reports() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        let h = sync::sha256_hex("alpha");
+        app.handle_async_event(AsyncEvent::PushDone {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            result: Ok(entry("g1", &h, &h)),
+        });
+        assert_eq!(app.store.get(&root, "a.md").unwrap().remote_id, "g1");
+        assert!(app.status_message.starts_with("Pushed a.md"));
+        assert_eq!(app.cached_status("a.md"), SyncStatus::Synced);
+    }
+
+    #[test]
+    fn push_done_err_reports_and_clears_pending_copy() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.pending_copy = Some("a.md".into());
+        app.handle_async_event(AsyncEvent::PushDone {
+            root,
+            rel_path: "a.md".into(),
+            result: Err("boom".into()),
+        });
+        assert!(app.status_message.starts_with("Push failed: boom"));
+        assert!(app.pending_copy.is_none());
+    }
+
+    #[test]
+    fn push_done_ok_with_pending_copy_clears_it() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        let h = sync::sha256_hex("alpha");
+        app.pending_copy = Some("a.md".into());
+        app.handle_async_event(AsyncEvent::PushDone {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            result: Ok(entry("g1", &h, &h)),
+        });
+        // The queued copy fires (clipboard may be unavailable, but the
+        // request is consumed either way).
+        assert!(app.pending_copy.is_none());
+        assert!(app.store.get(&root, "a.md").is_some());
+    }
+
+    // ── PullDone ────────────────────────────────────────────────────────
+
+    #[test]
+    fn pull_done_applies_when_local_unchanged() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        let expected = sync::sha256_hex("alpha");
+        app.handle_async_event(AsyncEvent::PullDone {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            expected_local_sha256: expected,
+            result: Ok(("remote body".into(), entry("g1", "x", "x"))),
+        });
+        assert_eq!(app.status_message, "Pulled a.md");
+        let on_disk = std::fs::read_to_string(root.join("a.md")).unwrap();
+        assert_eq!(on_disk, "remote body");
+    }
+
+    #[test]
+    fn pull_done_refuses_on_drift() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.handle_async_event(AsyncEvent::PullDone {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            // Stale hash: does not match the "alpha" on disk.
+            expected_local_sha256: sync::sha256_hex("something else"),
+            result: Ok(("remote body".into(), entry("g1", "x", "x"))),
+        });
+        assert!(app.status_message.contains("changed on disk"));
+        // Disk content preserved.
+        assert_eq!(std::fs::read_to_string(root.join("a.md")).unwrap(), "alpha");
+    }
+
+    #[test]
+    fn pull_done_err_reports() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.handle_async_event(AsyncEvent::PullDone {
+            root,
+            rel_path: "a.md".into(),
+            expected_local_sha256: "x".into(),
+            result: Err("net down".into()),
+        });
+        assert!(app.status_message.starts_with("Pull failed: net down"));
+    }
+
+    // ── PushBlocked ─────────────────────────────────────────────────────
+
+    #[test]
+    fn push_blocked_records_divergence_and_prompts_force() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        // Seed a mapping so record_divergence has something to update.
+        let h = sync::sha256_hex("alpha");
+        app.store.insert(&root, "a.md".into(), entry("g1", &h, &h));
+        app.refresh_status_cache();
+        app.handle_async_event(AsyncEvent::PushBlocked {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            remote_sha256: "different".into(),
+            remote_updated_at: chrono::Utc::now(),
+        });
+        assert!(matches!(
+            app.mode,
+            Mode::Confirm {
+                action: ConfirmAction::ForcePush { .. },
+                ..
+            }
+        ));
+        assert!(app.status_message.contains("Push blocked"));
+        // Divergence recorded => now RemoteNewer.
+        assert_eq!(app.cached_status("a.md"), SyncStatus::RemoteNewer);
+    }
+
+    // ── RemoteCheckDone ─────────────────────────────────────────────────
+
+    #[test]
+    fn remote_check_ok_applies_updates_and_resets_failures() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        let started = chrono::Utc::now();
+        // Existing mapping older than the check.
+        let mut cur = entry("g1", "l", "r");
+        cur.last_synced = started - chrono::Duration::seconds(60);
+        app.store.insert(&root, "a.md".into(), cur);
+        app.remote_poll_failures = 3;
+        app.remote_check_inflight = true;
+
+        let refreshed = entry("g1", "l", "new-remote");
+        app.handle_async_event(AsyncEvent::RemoteCheckDone {
+            root: root.clone(),
+            started,
+            result: Ok(RemoteCheckOutcome {
+                updated: vec![("a.md".into(), refreshed)],
+                divergent: 1,
+                missing: vec![],
+                checked: 1,
+            }),
+        });
+        assert!(!app.remote_check_inflight);
+        assert_eq!(app.remote_poll_failures, 0);
+        assert_eq!(
+            app.store.get(&root, "a.md").unwrap().remote_sha256,
+            "new-remote"
+        );
+        assert!(app.status_message.contains("1 of 1 changed"));
+    }
+
+    #[test]
+    fn remote_check_err_increments_failures() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.remote_check_inflight = true;
+        app.handle_async_event(AsyncEvent::RemoteCheckDone {
+            root,
+            started: chrono::Utc::now(),
+            result: Err("offline".into()),
+        });
+        assert_eq!(app.remote_poll_failures, 1);
+        assert!(app.status_message.contains("Remote check failed"));
+        // A second failure backs off silently (no status change).
+        let (_d2, mut app2, root2) = app3();
+        app2.remote_poll_failures = 1;
+        app2.status_message = "unchanged".into();
+        app2.handle_async_event(AsyncEvent::RemoteCheckDone {
+            root: root2,
+            started: chrono::Utc::now(),
+            result: Err("still offline".into()),
+        });
+        assert_eq!(app2.remote_poll_failures, 2);
+        assert_eq!(app2.status_message, "unchanged");
+    }
+
+    // ── HydrationDone ───────────────────────────────────────────────────
+
+    #[test]
+    fn hydration_done_ok_merges_and_sets_cursor() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        let mut discovered = Store::default();
+        let h = sync::sha256_hex("alpha");
+        discovered.insert(&root, "a.md".into(), entry("g1", &h, &h));
+        let cursor = chrono::Utc::now();
+        app.handle_async_event(AsyncEvent::HydrationDone(Ok(HydrationDoneData {
+            matched: 1,
+            ambiguous: vec![],
+            store: Box::new(discovered),
+            root: root.clone(),
+            new_cursor: cursor,
+        })));
+        assert!(app.store.get(&root, "a.md").is_some());
+        assert_eq!(app.store.hydrated_cursor(&root), Some(cursor));
+        assert!(app.status_message.contains("Hydrated 1 file"));
+    }
+
+    #[test]
+    fn hydration_done_with_ambiguous_sets_pending() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        let am = AmbiguousMatch {
+            local_path: "a.md".into(),
+            local_hash: "h".into(),
+            candidates: vec![GistCandidate {
+                remote_id: "g1".into(),
+                url: "u".into(),
+                description: None,
+                size: 1,
+            }],
+        };
+        app.handle_async_event(AsyncEvent::HydrationDone(Ok(HydrationDoneData {
+            matched: 0,
+            ambiguous: vec![am],
+            store: Box::new(Store::default()),
+            root,
+            new_cursor: chrono::Utc::now(),
+        })));
+        assert_eq!(app.pending_ambiguous.len(), 1);
+        assert!(app.status_message.contains("press M to resolve"));
+    }
+
+    #[test]
+    fn hydration_done_err_reports() {
+        let _g = guard();
+        let (_d, mut app, _root) = app3();
+        app.handle_async_event(AsyncEvent::HydrationDone(Err("bad token".into())));
+        assert!(app.status_message.starts_with("Hydration error: bad token"));
+    }
+
+    // ── DeleteDone ──────────────────────────────────────────────────────
+
+    #[test]
+    fn delete_done_ok_removes_mapping() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.store
+            .insert(&root, "a.md".into(), entry("g1", "x", "x"));
+        app.handle_async_event(AsyncEvent::DeleteDone {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            result: Ok(()),
+        });
+        // The mapping is gone; the transient "Deleted" message is immediately
+        // replaced by the refreshed status dashboard (update_status runs last).
+        assert!(app.store.get(&root, "a.md").is_none());
+    }
+
+    #[test]
+    fn delete_done_err_reports() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.handle_async_event(AsyncEvent::DeleteDone {
+            root,
+            rel_path: "a.md".into(),
+            result: Err("403".into()),
+        });
+        assert!(app.status_message.starts_with("Delete failed: 403"));
+    }
+
+    // ── LinkDone ────────────────────────────────────────────────────────
+
+    #[test]
+    fn link_done_ok_in_sync_reports() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        let h = sync::sha256_hex("alpha");
+        app.handle_async_event(AsyncEvent::LinkDone {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            result: Ok(entry("g1", &h, &h)),
+        });
+        assert!(app.store.get(&root, "a.md").is_some());
+        assert!(app.status_message.contains("in sync"));
+    }
+
+    #[test]
+    fn link_done_ok_differs_reports_diff_hint() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.handle_async_event(AsyncEvent::LinkDone {
+            root,
+            rel_path: "a.md".into(),
+            result: Ok(entry("g1", "local", "remote")),
+        });
+        assert!(app.status_message.contains("differs"));
+    }
+
+    #[test]
+    fn link_done_err_reports() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.handle_async_event(AsyncEvent::LinkDone {
+            root,
+            rel_path: "a.md".into(),
+            result: Err("not found".into()),
+        });
+        assert!(app.status_message.starts_with("Link failed: not found"));
+    }
+
+    // ── RenameRemoteDone ────────────────────────────────────────────────
+
+    #[test]
+    fn rename_remote_done_ok_and_err() {
+        let (_d, mut app, _root) = app3();
+        app.handle_async_event(AsyncEvent::RenameRemoteDone {
+            rel_path: "new.md".into(),
+            result: Ok(()),
+        });
+        assert!(app.status_message.contains("Renamed (local + remote)"));
+        app.handle_async_event(AsyncEvent::RenameRemoteDone {
+            rel_path: "new.md".into(),
+            result: Err("nope".into()),
+        });
+        assert!(app.status_message.contains("remote rename failed"));
+    }
+
+    // ── StatusCheck ─────────────────────────────────────────────────────
+
+    #[test]
+    fn status_check_ok_updates_diff_remote() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.mode = Mode::Diff {
+            local: "alpha".into(),
+            remote: "(fetching...)".into(),
+        };
+        app.handle_async_event(AsyncEvent::StatusCheck {
+            root,
+            rel_path: "a.md".into(),
+            started: chrono::Utc::now(),
+            result: Ok(FullStatus {
+                status: SyncStatus::Synced,
+                remote_content: "remote text".into(),
+                remote_sha256: sync::sha256_hex("remote text"),
+                remote_updated_at: chrono::Utc::now(),
+            }),
+        });
+        if let Mode::Diff { remote, .. } = &app.mode {
+            assert_eq!(remote, "remote text");
+        } else {
+            panic!("expected Diff mode");
+        }
+        assert!(app.status_message.contains("a.md"));
+    }
+
+    #[test]
+    fn status_check_err_reports() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.handle_async_event(AsyncEvent::StatusCheck {
+            root,
+            rel_path: "a.md".into(),
+            started: chrono::Utc::now(),
+            result: Err("timeout".into()),
+        });
+        assert!(
+            app.status_message
+                .starts_with("Status check failed: timeout")
+        );
+    }
+
+    // ── GdocFetched / GistImportFetched ─────────────────────────────────
+
+    #[test]
+    fn gdoc_fetched_ok_opens_filename_prompt() {
+        let (_d, mut app, _root) = app3();
+        app.handle_async_event(AsyncEvent::GdocFetched(Ok("# Doc".into())));
+        assert!(matches!(app.mode, Mode::GdocFilename));
+        assert_eq!(app.gdoc_content.as_deref(), Some("# Doc"));
+    }
+
+    #[test]
+    fn gdoc_fetched_err_shows_message() {
+        let (_d, mut app, _root) = app3();
+        app.handle_async_event(AsyncEvent::GdocFetched(Err("404".into())));
+        assert!(matches!(app.mode, Mode::Message(_)));
+    }
+
+    #[test]
+    fn gist_import_fetched_prefills_filename() {
+        let (_d, mut app, _root) = app3();
+        app.handle_async_event(AsyncEvent::GistImportFetched(Ok(GistImportData {
+            content: "body".into(),
+            filename: "notes.md".into(),
+            entry: entry("g1", "x", "x"),
+        })));
+        assert!(matches!(app.mode, Mode::GdocFilename));
+        assert_eq!(app.gdoc_content.as_deref(), Some("body"));
+        assert!(app.pending_import_entry.is_some());
+        // The .md suffix is stripped from the prefilled name.
+        assert_eq!(app.input_editor.content, "notes");
+    }
+
+    #[test]
+    fn gist_import_fetched_err_shows_message() {
+        let (_d, mut app, _root) = app3();
+        app.handle_async_event(AsyncEvent::GistImportFetched(Err("multi-file".into())));
+        assert!(matches!(app.mode, Mode::Message(_)));
+    }
+
+    // ── delete_options / apply_ambiguous_pick / scope_hint ──────────────
+
+    #[test]
+    fn delete_options_local_only_without_gist() {
+        let (_d, mut app, _root) = app3();
+        select(&mut app, "a.md");
+        assert_eq!(app.delete_options(), vec![DeleteChoice::Local]);
+    }
+
+    #[test]
+    fn delete_options_all_when_gisted() {
+        let (_d, mut app, root) = app3();
+        app.store
+            .insert(&root, "a.md".into(), entry("g1", "x", "x"));
+        select(&mut app, "a.md");
+        assert_eq!(
+            app.delete_options(),
+            vec![
+                DeleteChoice::Remote,
+                DeleteChoice::Local,
+                DeleteChoice::Both
+            ]
+        );
+    }
+
+    #[test]
+    fn delete_options_empty_without_selection() {
+        let (_d, app, _root) = app3();
+        assert!(app.delete_options().is_empty());
+    }
+
+    #[test]
+    fn apply_ambiguous_pick_records_mapping() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.pending_ambiguous.push(AmbiguousMatch {
+            local_path: "a.md".into(),
+            local_hash: sync::sha256_hex("alpha"),
+            candidates: vec![GistCandidate {
+                remote_id: "g1".into(),
+                url: "https://gist.github.com/u/g1".into(),
+                description: None,
+                size: 1,
+            }],
+        });
+        app.apply_ambiguous_pick(0, 0);
+        let mapped = app.store.get(&root, "a.md").unwrap();
+        assert_eq!(mapped.remote_id, "g1");
+        assert!(app.status_message.contains("Mapped a.md"));
+    }
+
+    #[test]
+    fn scope_hint_flags_403() {
+        assert!(scope_hint("boom (403)").contains("scope"));
+        assert_eq!(scope_hint("some other error"), "");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::parse_gist_id;
 

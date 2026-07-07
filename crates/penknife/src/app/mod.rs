@@ -15,6 +15,9 @@ mod gist;
 mod keys;
 mod view;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
