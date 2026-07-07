@@ -34,6 +34,11 @@ use event::{UiEvent, async_channel};
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
+    // Use ring as the rustls crypto provider. reqwest's `rustls-no-provider`
+    // feature keeps the heavy aws-lc-rs C library out of the tree; install the
+    // (lean) ring provider process-wide before any TLS request (idempotent -
+    // the gist client installs it too, for tests that never run main).
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let args = cli::Cli::parse();
     if args.config {
         return edit_config();
