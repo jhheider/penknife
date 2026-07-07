@@ -30,6 +30,18 @@ pub struct GistClient {
     base_url: String,
 }
 
+/// Install ring as the process-wide rustls crypto provider (idempotent).
+/// reqwest is built with `rustls-no-provider` to keep the heavy aws-lc-rs C
+/// library out of the dependency tree, so a provider must be installed before
+/// the first client is built - covers both the app and tests.
+fn ensure_crypto_provider() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 impl GistClient {
     pub fn new(token: String) -> Self {
         Self::with_base_url(token, API_BASE.to_string())
@@ -38,6 +50,7 @@ impl GistClient {
     /// Construct a client against a non-default API base URL (mock servers
     /// in tests, GitHub Enterprise).
     pub fn with_base_url(token: String, base_url: String) -> Self {
+        ensure_crypto_provider();
         Self {
             http: Client::builder()
                 .timeout(REQUEST_TIMEOUT)
