@@ -1,5 +1,10 @@
 # penknife
 
+[![CI](https://github.com/jhheider/penknife/actions/workflows/ci.yml/badge.svg)](https://github.com/jhheider/penknife/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/jhheider/penknife/badge.svg?branch=main)](https://coveralls.io/github/jhheider/penknife?branch=main)
+[![crates.io](https://img.shields.io/crates/v/penknife.svg)](https://crates.io/crates/penknife)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
+
 A fast terminal home for your markdown writing.
 
 Point penknife at a folder of writing (an Obsidian vault, a notes directory, anywhere you keep `.md` files) and it gives you a keyboard-driven browser over all of it: search across everything, preview any file, and hand a piece to someone with one keystroke that pastes cleanly into a Doc, an email, or Slack, formatting intact.
