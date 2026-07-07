@@ -13,7 +13,7 @@ use penknife_gist::GistClient;
 
 use crate::store::FileEntry;
 use crate::sync::sha256_hex;
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 #[derive(Debug)]
 pub struct RemoteCheckOutcome {

@@ -36,7 +36,7 @@ use crate::scanner::{self, ScannedFile};
 use crate::store::Store;
 use crate::sync;
 use crate::ui::input::LineEditor;
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 /// Shown when a token-requiring action runs with no token. The token is read
 /// once at launch, so fixing it means restarting.

@@ -7,7 +7,7 @@ use penknife_gist::{Gist, GistClient};
 use crate::scanner::ScannedFile;
 use crate::store::{FileEntry, Store};
 use crate::sync::sha256_hex;
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 #[derive(Debug)]
 pub struct HydrationProgress {

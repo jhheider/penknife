@@ -5,7 +5,7 @@ use penknife_gist::GistClient;
 use ratatui::style::Color;
 
 use crate::store::FileEntry;
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 /// SHA-256 hash of content as hex string.
 pub fn sha256_hex(content: &str) -> String {
