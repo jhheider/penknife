@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod config;
 mod event;
+mod fsutil;
 mod gdoc;
 mod git;
 mod glyphs;
