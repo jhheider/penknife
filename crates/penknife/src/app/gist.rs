@@ -26,7 +26,7 @@ impl App {
                 match result {
                     Ok(entry) => {
                         let url = entry.url.clone();
-                        self.store.insert(&root, rel_path.clone(), entry);
+                        self.store_mut().insert(&root, rel_path.clone(), entry);
                         if let Err(e) = self.store.save() {
                             self.status_message =
                                 format!("Pushed, but saving local state failed: {e}");
@@ -59,7 +59,7 @@ impl App {
             } => match result {
                 Ok((content, entry)) => {
                     match sync_apply::apply_pull(
-                        &mut self.store,
+                        self.store_mut(),
                         &root,
                         &rel_path,
                         &expected_local_sha256,
@@ -101,7 +101,7 @@ impl App {
                 // Record the observed divergence so the tree shows the real
                 // state (RemoteNewer/Conflict) even if the user declines.
                 if sync_apply::record_divergence(
-                    &mut self.store,
+                    self.store_mut(),
                     &root,
                     &rel_path,
                     remote_sha256,
@@ -135,7 +135,7 @@ impl App {
                     Ok(outcome) => {
                         self.remote_poll_failures = 0;
                         let applied = sync_apply::apply_remote_updates(
-                            &mut self.store,
+                            self.store_mut(),
                             &root,
                             started,
                             outcome.updated,
@@ -196,10 +196,11 @@ impl App {
                     // Merge hydration's discovered mappings into the live store
                     // rather than reloading from disk (which would clobber any
                     // concurrent push/pull that completed during hydration).
-                    self.store.merge_from(&data.store);
+                    self.store_mut().merge_from(&data.store);
                     // Advance this root's incremental cursor so the next
                     // hydrate only fetches gists changed after this walk began.
-                    self.store.set_hydrated_cursor(&data.root, data.new_cursor);
+                    self.store_mut()
+                        .set_hydrated_cursor(&data.root, data.new_cursor);
                     if let Err(e) = self.store.save() {
                         self.status_message =
                             format!("Hydrated, but saving local state failed: {e}");
@@ -240,7 +241,7 @@ impl App {
                     // so the tree reflects any divergence it revealed. Skip
                     // if the entry synced while the fetch was in flight.
                     if sync_apply::record_observation(
-                        &mut self.store,
+                        self.store_mut(),
                         &root,
                         &rel_path,
                         started,
@@ -268,7 +269,7 @@ impl App {
                 result,
             } => match result {
                 Ok(()) => {
-                    self.store.remove(&root, &rel_path);
+                    self.store_mut().remove(&root, &rel_path);
                     if let Err(e) = self.store.save() {
                         self.status_message =
                             format!("Deleted, but saving local state failed: {e}");
@@ -298,7 +299,7 @@ impl App {
                 Ok(entry) => {
                     let url = entry.url.clone();
                     let synced = entry.local_sha256 == entry.remote_sha256;
-                    self.store.insert(&root, rel_path.clone(), entry);
+                    self.store_mut().insert(&root, rel_path.clone(), entry);
                     if let Err(e) = self.store.save() {
                         self.status_message = format!("Linked, but saving local state failed: {e}");
                         return;
@@ -341,6 +342,29 @@ impl App {
                     self.mode = Mode::Message(format!("Gist import failed: {e}"));
                 }
             },
+            AsyncEvent::RefreshDone {
+                generation,
+                root,
+                files,
+                status_cache,
+                git_repo_root,
+                git_statuses,
+                select,
+                only_if_changed,
+                done_message,
+            } => {
+                self.apply_refresh(
+                    generation,
+                    root,
+                    files,
+                    status_cache,
+                    git_repo_root,
+                    git_statuses,
+                    select,
+                    only_if_changed,
+                    done_message,
+                );
+            }
         }
     }
 
@@ -866,11 +890,14 @@ impl App {
             remote_updated_at: None,
         };
         let rel = am.local_path.clone();
-        self.store.insert(&root, rel.clone(), entry.clone());
+        // Take an owned copy of the URL so the `am`/`cand` borrow is released
+        // before `store_mut()` (which borrows all of `self`).
+        let cand_url = cand.url.clone();
+        self.store_mut().insert(&root, rel.clone(), entry.clone());
         if let Err(e) = self.store.save() {
             self.status_message = format!("Resolved, but saving local state failed: {e}");
         } else {
-            self.status_message = format!("Mapped {rel} → {}", cand.url);
+            self.status_message = format!("Mapped {rel} → {cand_url}");
         }
         // The candidates here failed the content match, so the remote almost
         // certainly differs from local - fetch its real hash in the
@@ -1210,7 +1237,8 @@ mod handler_tests {
         let (_d, mut app, root) = app3();
         // Seed a mapping so record_divergence has something to update.
         let h = sync::sha256_hex("alpha");
-        app.store.insert(&root, "a.md".into(), entry("g1", &h, &h));
+        app.store_mut()
+            .insert(&root, "a.md".into(), entry("g1", &h, &h));
         app.refresh_status_cache();
         // A blocked push must also release the in-flight guard.
         app.pending_pushes.insert("a.md".into());
@@ -1243,7 +1271,7 @@ mod handler_tests {
         // Existing mapping older than the check.
         let mut cur = entry("g1", "l", "r");
         cur.last_synced = started - chrono::Duration::seconds(60);
-        app.store.insert(&root, "a.md".into(), cur);
+        app.store_mut().insert(&root, "a.md".into(), cur);
         app.remote_poll_failures = 3;
         app.remote_check_inflight = true;
 
@@ -1353,7 +1381,7 @@ mod handler_tests {
     fn delete_done_ok_removes_mapping() {
         let _g = guard();
         let (_d, mut app, root) = app3();
-        app.store
+        app.store_mut()
             .insert(&root, "a.md".into(), entry("g1", "x", "x"));
         app.handle_async_event(AsyncEvent::DeleteDone {
             root: root.clone(),
@@ -1530,7 +1558,7 @@ mod handler_tests {
     #[test]
     fn delete_options_all_when_gisted() {
         let (_d, mut app, root) = app3();
-        app.store
+        app.store_mut()
             .insert(&root, "a.md".into(), entry("g1", "x", "x"));
         select(&mut app, "a.md");
         assert_eq!(

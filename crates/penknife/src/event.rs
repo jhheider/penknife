@@ -1,11 +1,15 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyEvent, MouseEvent};
 use tokio::sync::mpsc;
 
+use crate::git::GitStatus;
 use crate::hydrate::{AmbiguousMatch, HydrationProgress};
+use crate::scanner::ScannedFile;
 use crate::store::Store;
+use crate::sync::SyncStatus;
 
 /// Payload of a successful gist-import fetch: the file's markdown content,
 /// the gist's filename (prefills the save-as prompt), and the ready-made
@@ -109,6 +113,34 @@ pub enum AsyncEvent {
     RenameRemoteDone {
         rel_path: String,
         result: std::result::Result<(), String>,
+    },
+    /// An off-thread refresh (directory scan + per-file sync-status cache +
+    /// `git status`) finished. Everything here was computed on a blocking-pool
+    /// thread so the render loop never stalls on the walk, the file reads, or
+    /// the git shell-out; the main loop just adopts the result.
+    RefreshDone {
+        /// Refresh sequence number, compared against the app's current
+        /// generation on apply so a superseded (older) refresh is dropped.
+        generation: u64,
+        /// The root this refresh scanned; dropped if the active root changed
+        /// while it ran.
+        root: PathBuf,
+        files: Vec<ScannedFile>,
+        status_cache: HashMap<String, SyncStatus>,
+        git_repo_root: Option<PathBuf>,
+        git_statuses: HashMap<String, GitStatus>,
+        /// If set, jump the tree selection to this rel_path after applying
+        /// (used after a rename so the moved file stays selected).
+        select: Option<String>,
+        /// If set, the result is discarded unless the file set actually
+        /// differs from what's shown - the periodic local sweep uses this so
+        /// idle browsing doesn't rebuild the tree (or reset preview scroll)
+        /// every interval.
+        only_if_changed: bool,
+        /// Status-bar message to show once the refresh lands, applied *after*
+        /// the dashboard/status refresh so an operation's own "Done" line wins
+        /// over the recomputed default.
+        done_message: Option<String>,
     },
 }
 

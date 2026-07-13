@@ -52,16 +52,14 @@ impl App {
         let abs = root.join(&rel_path);
         match trash::delete(&abs) {
             Ok(()) => {
-                self.store.remove(&root, &rel_path);
+                self.store_mut().remove(&root, &rel_path);
                 if let Err(e) = self.store.save() {
                     self.status_message = format!("Trashed, but saving local state failed: {e}");
                     return;
                 }
-                if let Err(e) = self.refresh_files() {
-                    self.status_message = format!("Trashed, but refresh failed: {e}");
-                    return;
-                }
-                self.status_message = format!("Moved {rel_path} to trash.");
+                let msg = format!("Moved {rel_path} to trash.");
+                self.status_message = msg.clone();
+                self.start_refresh(None, false, Some(msg));
             }
             Err(e) => {
                 self.status_message = format!("Trash failed: {e}");
@@ -127,7 +125,8 @@ impl App {
             .files_for_root(&root)
             .is_some_and(|m| m.contains_key(&old_rel))
         {
-            self.store.move_entry(&root, &old_rel, new_rel.clone());
+            self.store_mut()
+                .move_entry(&root, &old_rel, new_rel.clone());
             if let Err(e) = self.store.save() {
                 self.status_message =
                     format!("Renamed locally, but saving local state failed: {e}");
@@ -135,12 +134,8 @@ impl App {
             }
         }
 
-        // Refresh and select the new path.
-        if let Err(e) = self.refresh_files() {
-            self.status_message = format!("Renamed; refresh failed: {e}");
-            return;
-        }
-        self.jump_to(&new_rel);
+        // Refresh off-thread and re-select the new path once it lands.
+        self.start_refresh(Some(new_rel.clone()), false, None);
 
         // If the file was mapped to a gist, push the rename remotely too.
         // GitHub's gist filename is just the basename (we set it that way on
@@ -326,12 +321,8 @@ impl App {
         if !result.errors.is_empty() {
             msg.push_str(&format!(" - {} write error(s)", result.errors.len()));
         }
-        if let Err(e) = self.refresh_files() {
-            msg.push_str(&format!(" - refresh failed: {e}"));
-        }
-        self.update_preview();
-        self.update_status();
-        self.status_message = msg;
+        self.status_message = msg.clone();
+        self.start_refresh(None, false, Some(msg));
         self.replace_matches.clear();
         self.replace_checked.clear();
         self.mode = Mode::Normal;
@@ -512,7 +503,7 @@ impl App {
         {
             let rel_path = crate::scanner::rel_to_string(rel);
             let gist_url = entry.url.clone();
-            self.store.insert(&root, rel_path, entry);
+            self.store_mut().insert(&root, rel_path, entry);
             if let Err(e) = self.store.save() {
                 self.status_message = format!("Saved, but saving local state failed: {e}");
             } else {
@@ -520,9 +511,9 @@ impl App {
             }
         }
 
-        if let Err(e) = self.refresh_files() {
-            self.status_message = format!("Saved, but refresh failed: {e}");
-        }
+        // Preserve the message set above once the off-thread refresh lands.
+        let msg = self.status_message.clone();
+        self.start_refresh(None, false, Some(msg));
     }
 
     // ── Git integration ────────────────────────────────────────────────────
@@ -698,17 +689,13 @@ impl App {
                         }
                     }
                 }
-                if let Err(e) = self.refresh_files() {
-                    self.status_message = format!("Formatted {ok}; refresh failed: {e}");
-                    return;
-                }
-                self.update_preview();
-                self.update_status();
-                self.status_message = if errs == 0 {
+                let msg = if errs == 0 {
                     format!("Formatted {ok} JSON file(s).")
                 } else {
                     format!("Formatted {ok}; {errs} error(s).")
                 };
+                self.status_message = msg.clone();
+                self.start_refresh(None, false, Some(msg));
             }
             BulkAction::PruneOrphans { rels } => {
                 let Some(root) = self.active_root_path() else {
@@ -717,7 +704,7 @@ impl App {
                 };
                 let n = rels.len();
                 for rel in &rels {
-                    self.store.remove(&root, rel);
+                    self.store_mut().remove(&root, rel);
                 }
                 if let Err(e) = self.store.save() {
                     self.status_message = format!("Pruned {n}, but saving local state failed: {e}");
@@ -765,8 +752,8 @@ mod tests {
 
     // ── do_rename ───────────────────────────────────────────────────────
 
-    #[test]
-    fn rename_moves_file_on_disk() {
+    #[tokio::test]
+    async fn rename_moves_file_on_disk() {
         let (_d, mut app, root) = app3();
         app.do_rename("a.md".into(), "renamed.md".into());
         assert!(!root.join("a.md").exists());
@@ -808,11 +795,11 @@ mod tests {
         assert!(app.status_message.contains("Target exists"));
     }
 
-    #[test]
-    fn rename_moves_store_entry_no_token() {
+    #[tokio::test]
+    async fn rename_moves_store_entry_no_token() {
         let _g = guard();
         let (_d, mut app, root) = app3();
-        app.store.insert(&root, "a.md".into(), entry("g1"));
+        app.store_mut().insert(&root, "a.md".into(), entry("g1"));
         app.do_rename("a.md".into(), "renamed.md".into());
         // Store key moved with the file.
         assert!(app.store.get(&root, "a.md").is_none());
@@ -853,8 +840,8 @@ mod tests {
         assert!(app.replace_checked.iter().all(|c| *c));
     }
 
-    #[test]
-    fn apply_replace_rewrites_checked_matches() {
+    #[tokio::test]
+    async fn apply_replace_rewrites_checked_matches() {
         let (_d, mut app, root) = app3();
         app.replace_query = "alpha".into();
         app.run_replace_scan();
@@ -906,7 +893,8 @@ mod tests {
         let _g = guard();
         let (_d, mut app, root) = app3();
         // An orphan: a store entry with no matching file.
-        app.store.insert(&root, "ghost.md".into(), entry("g9"));
+        app.store_mut()
+            .insert(&root, "ghost.md".into(), entry("g9"));
         app.refresh_status_cache();
         let opts = app.bulk_options();
         // PushAllDirty: all three real files are NotGisted.
@@ -927,15 +915,16 @@ mod tests {
         // (nothing to remove, but the path executes and reports)
         assert!(app.status_message.contains("Pruned"));
         // Add a real orphan and prune it.
-        app.store.insert(&root, "ghost.md".into(), entry("g9"));
+        app.store_mut()
+            .insert(&root, "ghost.md".into(), entry("g9"));
         app.run_bulk(BulkAction::PruneOrphans {
             rels: vec!["ghost.md".into()],
         });
         assert!(app.store.get(&root, "ghost.md").is_none());
     }
 
-    #[test]
-    fn run_bulk_format_json_pretty_prints() {
+    #[tokio::test]
+    async fn run_bulk_format_json_pretty_prints() {
         let (_d, mut app, root) = app3();
         write_file(root.as_path(), "data.json", "{\"b\":1,\"a\":2}");
         app.refresh_files().unwrap();
@@ -976,8 +965,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn save_gdoc_import_writes_file() {
+    #[tokio::test]
+    async fn save_gdoc_import_writes_file() {
         let _g = guard();
         let (_d, mut app, root) = app3();
         app.gdoc_content = Some("# Imported".into());
