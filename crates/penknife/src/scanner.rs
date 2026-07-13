@@ -117,9 +117,7 @@ fn walk_dir(
                 abs_path: path,
                 modified,
             });
-            // `is_multiple_of` would be cleaner but needs Rust 1.87 > our 1.85 MSRV.
-            #[allow(clippy::manual_is_multiple_of)]
-            if out.len() % PROGRESS_EVERY == 0 {
+            if out.len().is_multiple_of(PROGRESS_EVERY) {
                 on_progress(out.len());
             }
         }
