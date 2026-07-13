@@ -382,7 +382,10 @@ impl App {
                     }
                     let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
                     self.mode = Mode::RootSwitcher { selected: new_sel };
-                    self.start_refresh(None, false, None);
+                    self.start_refresh(super::Refresh::User {
+                        select: None,
+                        done_message: None,
+                    });
                 }
             }
             _ => {}
@@ -417,7 +420,10 @@ impl App {
                 self.files.clear();
                 self.status_cache.clear();
                 self.rebuild_tree();
-                self.start_refresh(None, false, None);
+                self.start_refresh(super::Refresh::User {
+                    select: None,
+                    done_message: None,
+                });
                 self.mode = Mode::Normal;
             }
             KeyCode::Char('q')

@@ -365,6 +365,12 @@ impl App {
                     done_message,
                 );
             }
+            AsyncEvent::ScanProgress { generation, count } => {
+                // Ignore progress from a superseded scan.
+                if generation == self.refresh_generation && self.scanning {
+                    self.scan_count = count;
+                }
+            }
         }
     }
 
@@ -1601,6 +1607,42 @@ mod handler_tests {
     fn scope_hint_flags_403() {
         assert!(scope_hint("boom (403)").contains("scope"));
         assert_eq!(scope_hint("some other error"), "");
+    }
+
+    #[test]
+    fn scan_progress_updates_count_and_refresh_done_clears_scanning() {
+        let (_d, mut app, root) = app3();
+        app.scanning = true;
+        let generation = app.refresh_generation;
+
+        // Progress from the in-flight scan bumps the counter.
+        app.handle_async_event(AsyncEvent::ScanProgress {
+            generation,
+            count: 512,
+        });
+        assert_eq!(app.scan_count, 512);
+
+        // Progress from a superseded scan is ignored.
+        app.handle_async_event(AsyncEvent::ScanProgress {
+            generation: generation + 9,
+            count: 999,
+        });
+        assert_eq!(app.scan_count, 512);
+
+        // The refresh landing leaves the scanning state.
+        app.handle_async_event(AsyncEvent::RefreshDone {
+            generation,
+            root,
+            files: Vec::new(),
+            status_cache: std::collections::HashMap::new(),
+            git_repo_root: None,
+            git_statuses: std::collections::HashMap::new(),
+            select: None,
+            only_if_changed: false,
+            done_message: None,
+        });
+        assert!(!app.scanning);
+        assert_eq!(app.scan_count, 0);
     }
 }
 

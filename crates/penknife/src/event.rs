@@ -142,6 +142,14 @@ pub enum AsyncEvent {
         /// over the recomputed default.
         done_message: Option<String>,
     },
+    /// Live progress from the initial (startup) scan: how many files the walk
+    /// has found so far. Lets the tree pane show a `dua`-style counter instead
+    /// of a blank frame while a large (e.g. cloud-synced) root is scanned.
+    ScanProgress {
+        /// The refresh this progress belongs to; ignored if superseded.
+        generation: u64,
+        count: usize,
+    },
 }
 
 /// User-input events from the terminal that the app cares about.

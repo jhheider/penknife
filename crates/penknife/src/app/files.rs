@@ -59,7 +59,10 @@ impl App {
                 }
                 let msg = format!("Moved {rel_path} to trash.");
                 self.status_message = msg.clone();
-                self.start_refresh(None, false, Some(msg));
+                self.start_refresh(super::Refresh::User {
+                    select: None,
+                    done_message: Some(msg),
+                });
             }
             Err(e) => {
                 self.status_message = format!("Trash failed: {e}");
@@ -135,7 +138,10 @@ impl App {
         }
 
         // Refresh off-thread and re-select the new path once it lands.
-        self.start_refresh(Some(new_rel.clone()), false, None);
+        self.start_refresh(super::Refresh::User {
+            select: Some(new_rel.clone()),
+            done_message: None,
+        });
 
         // If the file was mapped to a gist, push the rename remotely too.
         // GitHub's gist filename is just the basename (we set it that way on
@@ -322,7 +328,10 @@ impl App {
             msg.push_str(&format!(" - {} write error(s)", result.errors.len()));
         }
         self.status_message = msg.clone();
-        self.start_refresh(None, false, Some(msg));
+        self.start_refresh(super::Refresh::User {
+            select: None,
+            done_message: Some(msg),
+        });
         self.replace_matches.clear();
         self.replace_checked.clear();
         self.mode = Mode::Normal;
@@ -513,7 +522,10 @@ impl App {
 
         // Preserve the message set above once the off-thread refresh lands.
         let msg = self.status_message.clone();
-        self.start_refresh(None, false, Some(msg));
+        self.start_refresh(super::Refresh::User {
+            select: None,
+            done_message: Some(msg),
+        });
     }
 
     // ── Git integration ────────────────────────────────────────────────────
@@ -695,7 +707,10 @@ impl App {
                     format!("Formatted {ok}; {errs} error(s).")
                 };
                 self.status_message = msg.clone();
-                self.start_refresh(None, false, Some(msg));
+                self.start_refresh(super::Refresh::User {
+                    select: None,
+                    done_message: Some(msg),
+                });
             }
             BulkAction::PruneOrphans { rels } => {
                 let Some(root) = self.active_root_path() else {
