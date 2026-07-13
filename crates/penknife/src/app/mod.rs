@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use crate::config::Config;
 use crate::event::AsyncSender;
 use crate::hydrate::AmbiguousMatch;
-use crate::scanner::{self, ScannedFile};
+use crate::scanner::ScannedFile;
 use crate::store::Store;
 use crate::sync;
 use crate::ui::input::LineEditor;
@@ -209,6 +209,25 @@ pub enum ConfirmAction {
     },
 }
 
+/// What kind of off-thread refresh [`App::start_refresh`] should run. Captures
+/// the three call-site intents so the boolean knobs (progress reporting,
+/// change-gating) live in one place instead of at every caller.
+pub(crate) enum Refresh {
+    /// Startup scan: report live progress (drives the scanning indicator) and
+    /// always apply, even an empty result, so the indicator clears.
+    Initial,
+    /// Periodic local sweep: no progress, and drop the result unless the file
+    /// set actually changed on disk.
+    Sweep,
+    /// A user-initiated refresh (root switch, `r`, a file op): always apply.
+    /// `select` re-selects a path after applying (post-rename); `done_message`
+    /// is the status line to show once the refresh lands.
+    User {
+        select: Option<String>,
+        done_message: Option<String>,
+    },
+}
+
 pub struct App {
     pub config: Config,
     /// Behind an `Arc` so an off-thread refresh can capture the store with an
@@ -317,6 +336,13 @@ pub struct App {
     /// the current value, so a slow refresh superseded by a newer one (root
     /// switch, another sweep) is discarded instead of clobbering fresh state.
     pub refresh_generation: u64,
+    /// True while the startup scan is in flight. The tree pane shows a
+    /// `dua`-style scanning indicator instead of an empty tree until the first
+    /// refresh lands, and the periodic sweep/hydration hold off until it does.
+    pub scanning: bool,
+    /// Latest file count reported by the in-flight startup scan (drives the
+    /// scanning indicator's counter and spinner).
+    pub scan_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,17 +432,14 @@ impl App {
             Mode::Normal
         };
 
-        let files = if config.roots.is_empty() {
-            Vec::new()
-        } else {
-            let ignore = scanner::build_globset(&config.roots[0].ignore);
-            scanner::scan_directory(&config.roots[0].path, &ignore).unwrap_or_default()
-        };
+        // The tree is populated by an off-thread scan (kicked off below) so a
+        // large/cloud-synced root never blocks the first frame; it starts empty.
+        let has_root = !config.roots.is_empty();
 
         let mut app = App {
             config,
             store: Arc::new(store),
-            files,
+            files: Vec::new(),
             tree_items: Vec::new(),
             tree_identifiers: Vec::new(),
             tree_file_ids: HashSet::new(),
@@ -466,16 +489,19 @@ impl App {
             last_local_sweep: Some(Instant::now()),
             startup_hydrate_done: false,
             refresh_generation: 0,
+            scanning: false,
+            scan_count: 0,
         };
-        // Populate the per-file sync-status cache and git status before the
-        // first tree build so leaf glyphs reflect the loaded store right away.
-        // Without the status pass, every file paints as NotGisted until the
-        // first `r` ran `refresh_files` - making a freshly-loaded store look
-        // entirely unsynced.
-        app.refresh_status_cache();
-        app.refresh_git_status();
         app.rebuild_tree();
         app.update_status();
+        // Kick off the initial scan off-thread. The first frame draws
+        // immediately (an empty tree with a scanning indicator); the tree,
+        // status cache, and git status all fill in when it lands. No root
+        // configured means the SetupRoot prompt, so there's nothing to scan.
+        if has_root {
+            app.scanning = true;
+            app.start_refresh(Refresh::Initial);
+        }
         // Without a token, GitHub sync is simply off; the browse/search/copy
         // side works fine. Say so once, instead of letting the user discover
         // it by pressing `u` and hitting a bare error. An alias warning, if
@@ -506,6 +532,13 @@ impl App {
         // all run on a blocking-pool thread; the result is applied only if the
         // file set actually changed (`only_if_changed`), so an idle no-op costs
         // one background walk and never touches the render thread.
+        // Hold off all background cadence while the startup scan is still in
+        // flight - the file list isn't ready, and a sweep would supersede the
+        // initial scan (leaving the indicator stuck).
+        if self.scanning {
+            return;
+        }
+
         let local_secs = self.config.poll.local_secs;
         if local_secs > 0
             && self
@@ -513,11 +546,12 @@ impl App {
                 .is_none_or(|t| t.elapsed() >= Duration::from_secs(local_secs))
         {
             self.last_local_sweep = Some(Instant::now());
-            self.start_refresh(None, true, None);
+            self.start_refresh(Refresh::Sweep);
         }
 
         // One-shot incremental hydration: pick up gists created or changed
-        // since the last walk (or do the first full walk on a new root).
+        // since the last walk (or do the first full walk on a new root). Waits
+        // for the initial scan (guarded above) so `files` is populated.
         if !self.startup_hydrate_done {
             self.startup_hydrate_done = true;
             if self.token.is_some() && !self.files.is_empty() {
@@ -556,6 +590,15 @@ impl App {
     /// working directory when running user aliases or other shell-outs.
     pub fn active_root_path(&self) -> Option<PathBuf> {
         self.current_root().cloned()
+    }
+
+    /// Short label for the active root (its final path component), shown by the
+    /// scanning indicator. Empty when there's no root.
+    pub(crate) fn current_root_label(&self) -> String {
+        self.current_root()
+            .and_then(|r| r.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
     }
 
     /// Spawn a tokio task and track its JoinHandle so it can be aborted on quit.

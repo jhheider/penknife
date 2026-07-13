@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
-use super::{App, Mode, PaneFocus};
+use super::{App, Mode, PaneFocus, Refresh};
 use crate::git::GitStatus;
 use crate::scanner::{self, ScannedFile};
 use crate::store::{FileEntry, Store};
@@ -223,17 +223,18 @@ impl App {
     /// responsive throughout - even if the scan stalls on a slow mount or git
     /// hangs.
     ///
-    /// - `select`: jump to this rel_path once applied (post-rename).
-    /// - `only_if_changed`: drop the result unless the file set actually moved
-    ///   (the periodic local sweep sets this).
-    /// - `done_message`: status line to show after the refresh lands, winning
-    ///   over the recomputed default (an operation's "Done" message).
-    pub(crate) fn start_refresh(
-        &mut self,
-        select: Option<String>,
-        only_if_changed: bool,
-        done_message: Option<String>,
-    ) {
+    /// See [`Refresh`] for the three call-site intents (startup / sweep /
+    /// user-initiated) this dispatches on.
+    pub(crate) fn start_refresh(&mut self, kind: Refresh) {
+        let (select, only_if_changed, progress, done_message) = match kind {
+            Refresh::Initial => (None, false, true, None),
+            Refresh::Sweep => (None, true, false, None),
+            Refresh::User {
+                select,
+                done_message,
+            } => (select, false, false, done_message),
+        };
+
         let Some(entry) = self.current_root_entry().cloned() else {
             // No root configured: nothing to scan. Clear synchronously (cheap,
             // no IO) so a torn-down root doesn't linger in the tree.
@@ -241,6 +242,7 @@ impl App {
             self.status_cache.clear();
             self.git_statuses.clear();
             self.git_repo_root = None;
+            self.scanning = false;
             self.rebuild_tree();
             return;
         };
@@ -254,6 +256,7 @@ impl App {
             self.status_cache.clear();
             self.git_statuses.clear();
             self.git_repo_root = None;
+            self.scanning = false;
             self.rebuild_tree();
             return;
         }
@@ -269,10 +272,19 @@ impl App {
         // bail before reading any file contents or shelling out to git.
         let prev_fingerprint = super::files_fingerprint(&self.files);
         let tx = self.async_tx.clone();
+        let progress_tx = tx.clone();
         self.spawn_tracked(async move {
             let computed = tokio::task::spawn_blocking(move || {
                 let ignore = scanner::build_globset(&ignore_patterns);
-                let files = scanner::scan_directory(&root, &ignore).unwrap_or_default();
+                let files = if progress {
+                    scanner::scan_directory_with_progress(&root, &ignore, &mut |count| {
+                        let _ = progress_tx
+                            .send(crate::event::AsyncEvent::ScanProgress { generation, count });
+                    })
+                    .unwrap_or_default()
+                } else {
+                    scanner::scan_directory(&root, &ignore).unwrap_or_default()
+                };
                 // Idle sweep with nothing moved on disk: skip the per-file
                 // content reads and the git shell-out entirely.
                 if only_if_changed && super::files_fingerprint(&files) == prev_fingerprint {
@@ -330,6 +342,9 @@ impl App {
             return;
         }
 
+        // The scan (initial or otherwise) has landed: leave the scanning state.
+        self.scanning = false;
+        self.scan_count = 0;
         self.files = files;
         self.status_cache = status_cache;
         self.git_repo_root = git_repo_root;
@@ -366,7 +381,10 @@ impl App {
             self.git_repo_root = None;
             self.rebuild_tree();
             self.update_status();
-            self.start_refresh(None, false, None);
+            self.start_refresh(super::Refresh::User {
+                select: None,
+                done_message: None,
+            });
         }
     }
 

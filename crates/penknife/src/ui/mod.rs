@@ -59,6 +59,39 @@ fn truncate_path_for_title(path: &str, max: usize) -> String {
     format!("…{tail}")
 }
 
+/// Render the startup-scan indicator inside the tree pane: a centered spinner,
+/// "Scanning <root>…", and a running file count, so a large (cloud-synced)
+/// root shows live progress instead of a blank frame.
+fn render_scanning(f: &mut Frame, area: Rect, block: Block, root_label: &str, count: usize) {
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let spinner = crate::glyphs::spinner_frame(count / 256);
+    let heading = if root_label.is_empty() {
+        format!("{spinner} Scanning…")
+    } else {
+        format!("{spinner} Scanning {root_label}…")
+    };
+    let lines = vec![
+        Line::from(Span::styled(
+            heading,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("{count} files"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+    // Vertically center the three lines within the pane.
+    let top = inner.height.saturating_sub(3) / 2;
+    let rows = Layout::vertical([Constraint::Length(top), Constraint::Min(3)]).split(inner);
+    f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), rows[1]);
+}
+
 /// Render the full UI.
 pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::vertical([
@@ -118,12 +151,24 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .borders(Borders::ALL)
         .title(title_line)
         .border_style(Style::default().fg(tree_border));
-    let tree_widget = Tree::new(&app.tree_items)
-        .expect("tree widget")
-        .block(tree_block)
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
 
-    f.render_stateful_widget(tree_widget, panes[0], &mut app.tree_state);
+    if app.scanning {
+        // Startup scan in flight: show a live counter in place of an empty
+        // tree so a large (e.g. cloud-synced) root doesn't look like a hang.
+        render_scanning(
+            f,
+            panes[0],
+            tree_block,
+            &app.current_root_label(),
+            app.scan_count,
+        );
+    } else {
+        let tree_widget = Tree::new(&app.tree_items)
+            .expect("tree widget")
+            .block(tree_block)
+            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
+        f.render_stateful_widget(tree_widget, panes[0], &mut app.tree_state);
+    }
 
     // Right pane (preview or diff). Titles are mode-prefixed and front-truncated
     // so long rel_paths don't blow out the border.
@@ -374,6 +419,17 @@ mod tests {
             let out = render(&mut app);
             assert!(out.contains("Files"));
             assert!(out.contains("Preview"));
+        }
+
+        #[test]
+        fn draws_scanning_indicator() {
+            let (_d, mut app) = make_app();
+            app.scanning = true;
+            app.scan_count = 512;
+            let out = render(&mut app);
+            // The scanning indicator replaces the tree with a live counter.
+            assert!(out.contains("Scanning"));
+            assert!(out.contains("512 files"));
         }
 
         #[test]

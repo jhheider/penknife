@@ -38,13 +38,34 @@ pub fn is_supported_ext(ext: &str) -> bool {
 /// Walk `root` recursively, collecting all supported files, sorted by mtime
 /// (newest first). Skips files whose rel_path matches `ignore`.
 pub fn scan_directory(root: &Path, ignore: &GlobSet) -> Result<Vec<ScannedFile>> {
+    scan_directory_with_progress(root, ignore, &mut |_| {})
+}
+
+/// Like [`scan_directory`], but invokes `on_progress` with the running
+/// found-file count roughly every [`PROGRESS_EVERY`] files. Used by the
+/// startup scan to drive a live counter while a large root is walked.
+pub fn scan_directory_with_progress(
+    root: &Path,
+    ignore: &GlobSet,
+    on_progress: &mut dyn FnMut(usize),
+) -> Result<Vec<ScannedFile>> {
     let mut files = Vec::new();
-    walk_dir(root, root, ignore, &mut files)?;
+    walk_dir(root, root, ignore, &mut files, on_progress)?;
     files.sort_by_key(|b| std::cmp::Reverse(b.modified));
     Ok(files)
 }
 
-fn walk_dir(root: &Path, dir: &Path, ignore: &GlobSet, out: &mut Vec<ScannedFile>) -> Result<()> {
+/// How often (in found files) the walk reports progress. Coarse enough that a
+/// small tree fires at most once, fine enough that a big one animates.
+const PROGRESS_EVERY: usize = 256;
+
+fn walk_dir(
+    root: &Path,
+    dir: &Path,
+    ignore: &GlobSet,
+    out: &mut Vec<ScannedFile>,
+    on_progress: &mut dyn FnMut(usize),
+) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return Ok(()),
@@ -71,7 +92,7 @@ fn walk_dir(root: &Path, dir: &Path, ignore: &GlobSet, out: &mut Vec<ScannedFile
                 continue;
             }
             let before = out.len();
-            walk_dir(root, &path, ignore, out)?;
+            walk_dir(root, &path, ignore, out, on_progress)?;
             // Prune directories that contained no supported files
             if out.len() == before {
                 continue;
@@ -96,6 +117,11 @@ fn walk_dir(root: &Path, dir: &Path, ignore: &GlobSet, out: &mut Vec<ScannedFile
                 abs_path: path,
                 modified,
             });
+            // `is_multiple_of` would be cleaner but needs Rust 1.87 > our 1.85 MSRV.
+            #[allow(clippy::manual_is_multiple_of)]
+            if out.len() % PROGRESS_EVERY == 0 {
+                on_progress(out.len());
+            }
         }
     }
     Ok(())
