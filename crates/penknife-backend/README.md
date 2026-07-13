@@ -10,8 +10,8 @@ publishes and syncs documents through.
 A backend is one remote service that can hold a copy of a local document
 (GitHub Gists today, via
 [`penknife-gist`](https://crates.io/crates/penknife-gist); the seam is here for
-more). The trait is deliberately small — it mirrors exactly what penknife's
-sync engine consumes — so a single implementation unlocks the whole UI.
+more). The trait is deliberately small: it mirrors exactly what penknife's
+sync engine consumes, so a single implementation unlocks the whole UI.
 
 ## The contract
 

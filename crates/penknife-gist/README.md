@@ -11,23 +11,23 @@ its own.
 
 ## What it does
 
-- **Full CRUD over gists** — list, get, create, update, delete, and rename a
+- **Full CRUD over gists** - list, get, create, update, delete, and rename a
   file within a gist.
-- **Retries transient failures** — network errors and `5xx` responses are
+- **Retries transient failures** - network errors and `5xx` responses are
   retried with exponential backoff (up to 3 attempts).
-- **Respects rate limits** — honors `Retry-After` and
+- **Respects rate limits** - honors `Retry-After` and
   `X-RateLimit-Remaining`/`X-RateLimit-Reset`, sleeping until the window
   resets rather than hammering the API.
-- **Paginates** — walk one page at a time (`list_page`, `list_page_since`) or
+- **Paginates** - walk one page at a time (`list_page`, `list_page_since`) or
   fetch everything (`list_all`); a `since` cursor supports cheap incremental
   polling.
-- **Fetches file content** honestly — small files come from the `raw_url`;
+- **Fetches file content** honestly - small files come from the `raw_url`;
   files past GitHub's 10 MB raw-fetch limit surface a `TooLarge` error instead
   of silently truncating.
 - **Implements [`penknife-backend`](https://crates.io/crates/penknife-backend)'s
   `Backend` trait**, so it drops into penknife's sync engine as an
   `Arc<dyn Backend>`.
-- **rustls + ring** for TLS — no OpenSSL, no aws-lc, no C toolchain in the
+- **rustls + ring** for TLS - no OpenSSL, no aws-lc, no C toolchain in the
   build.
 
 ## Usage
