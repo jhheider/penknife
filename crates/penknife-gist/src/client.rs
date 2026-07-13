@@ -24,6 +24,11 @@ pub struct GistPage {
     pub has_next: bool,
 }
 
+/// Cheap to clone: `reqwest::Client` is `Arc`-backed and clones share one
+/// connection pool, so a single `GistClient` reused across operations keeps
+/// the TCP/TLS connection to the API warm instead of paying a fresh handshake
+/// per request.
+#[derive(Clone)]
 pub struct GistClient {
     http: Client,
     token: String,

@@ -155,7 +155,7 @@ impl App {
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
             if old_base != new_base {
-                let Some(token) = self.token.clone() else {
+                let Some(client) = self.gist_client.clone() else {
                     self.status_message = "Renamed locally; no token to update remote gist.".into();
                     return;
                 };
@@ -164,7 +164,6 @@ impl App {
                 self.status_message = "Renamed locally; updating remote gist...".to_string();
                 let remote_id = entry.remote_id.clone();
                 self.spawn_tracked(async move {
-                    let client = penknife_gist::GistClient::new(token);
                     let result = client
                         .rename_file(&remote_id, &old_base, &new_base)
                         .await

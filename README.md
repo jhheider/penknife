@@ -43,6 +43,12 @@ brew install jhheider/tap/penknife
 **With Cargo** (builds from source; needs a [Rust](https://rustup.rs) toolchain):
 
 ```bash
+cargo install penknife
+```
+
+Or the latest unreleased code straight from git:
+
+```bash
 cargo install --git https://github.com/jhheider/penknife penknife
 ```
 

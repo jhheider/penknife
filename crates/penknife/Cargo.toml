@@ -1,16 +1,17 @@
 [package]
 name = "penknife"
 description = "Git-style remotes for your documents: sync a folder of markdown to GitHub Gists, track drift per file, and copy anything as rich text to paste elsewhere"
-version = "0.2.1"
+version = "0.2.2"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme.workspace = true
 keywords = ["tui", "markdown", "gist", "notes", "sync"]
 categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
-penknife-gist = { path = "../penknife-gist", version = "0.2.0" }
+penknife-gist = { path = "../penknife-gist", version = "0.2.1" }
 clap = { version = "4", features = ["derive"] }
 ratatui = "0.30"
 crossterm = "0.29"

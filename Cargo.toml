@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/jhheider/penknife"
 authors = ["Jacob Heider <jhheider@gmail.com>"]
 rust-version = "1.85"
+readme = "README.md"
 
 [workspace.dependencies]
 async-trait = "0.1"
