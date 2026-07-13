@@ -1,11 +1,12 @@
 [package]
 name = "penknife-backend"
 description = "Backend contract for penknife: publish and sync documents to remote services"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
 
 [dependencies]
 async-trait = { workspace = true }

@@ -21,28 +21,36 @@ impl App {
                 root,
                 rel_path,
                 result,
-            } => match result {
-                Ok(entry) => {
-                    let url = entry.url.clone();
-                    self.store.insert(&root, rel_path.clone(), entry);
-                    if let Err(e) = self.store.save() {
-                        self.status_message = format!("Pushed, but saving local state failed: {e}");
-                        return;
+            } => {
+                self.pending_pushes.remove(&rel_path);
+                match result {
+                    Ok(entry) => {
+                        let url = entry.url.clone();
+                        self.store.insert(&root, rel_path.clone(), entry);
+                        if let Err(e) = self.store.save() {
+                            self.status_message =
+                                format!("Pushed, but saving local state failed: {e}");
+                            return;
+                        }
+                        self.refresh_status_for(&rel_path);
+                        self.rebuild_tree();
+                        // Follow up on a queued copy-url request, if it's for
+                        // this file. Skip the intermediate "Pushed" message when
+                        // a copy is about to supersede it - otherwise a second,
+                        // later PushDone's "Pushed" line would clobber "Copied".
+                        if self.pending_copy.as_ref().is_some_and(|p| *p == rel_path) {
+                            self.pending_copy = None;
+                            self.copy_to_clipboard(&url);
+                        } else {
+                            self.status_message = format!("Pushed {rel_path} → {url}");
+                        }
                     }
-                    self.refresh_status_for(&rel_path);
-                    self.rebuild_tree();
-                    self.status_message = format!("Pushed {rel_path} → {url}");
-                    // Follow up on a queued copy-url request, if it's for this file.
-                    if self.pending_copy.as_ref().is_some_and(|p| *p == rel_path) {
+                    Err(e) => {
                         self.pending_copy = None;
-                        self.copy_to_clipboard(&url);
+                        self.status_message = format!("Push failed: {e}{}", scope_hint(&e));
                     }
                 }
-                Err(e) => {
-                    self.pending_copy = None;
-                    self.status_message = format!("Push failed: {e}{}", scope_hint(&e));
-                }
-            },
+            }
             AsyncEvent::PullDone {
                 root,
                 rel_path,
@@ -89,6 +97,7 @@ impl App {
                 remote_sha256,
                 remote_updated_at,
             } => {
+                self.pending_pushes.remove(&rel_path);
                 // Record the observed divergence so the tree shows the real
                 // state (RemoteNewer/Conflict) even if the user declines.
                 if sync_apply::record_divergence(
@@ -356,7 +365,7 @@ impl App {
     /// save-as prompt opens with the mapping queued; the store write lands
     /// in `save_gdoc_import` once the file exists on disk.
     fn start_gist_import(&mut self, id: String) {
-        let Some(token) = self.token.clone() else {
+        let Some(client) = self.gist_client.clone() else {
             self.status_message = crate::app::NO_TOKEN_HINT.into();
             self.mode = Mode::Normal;
             return;
@@ -366,7 +375,6 @@ impl App {
         self.mode = Mode::Normal; // switches to the save-as prompt on result
 
         self.spawn_tracked(async move {
-            let client = penknife_gist::GistClient::new(token);
             let result = async {
                 let gist = client.get(&id).await.map_err(|e| e.to_string())?;
                 if gist.files.len() != 1 {
@@ -413,7 +421,16 @@ impl App {
     /// refused when the remote changed since the last sync; a PushBlocked
     /// event then records the divergence and prompts for a force-push.
     pub(crate) fn do_sync_up_for(&mut self, rel: String, force: bool) {
-        let Some(token) = self.token.clone() else {
+        // Debounce: don't stack a second push on a file that's already
+        // pushing (e.g. a double `u` press). Two concurrent pushes of an
+        // unmapped file would each create a separate gist. A force-push is a
+        // deliberate override from the confirm dialog, so it always proceeds
+        // (and PushBlocked has already cleared the guard by then anyway).
+        if !force && self.pending_pushes.contains(&rel) {
+            self.status_message = format!("Already pushing {rel}...");
+            return;
+        }
+        let Some(client) = self.gist_client.clone() else {
             self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
@@ -440,9 +457,9 @@ impl App {
         let root_clone = root.clone();
 
         self.status_message = format!("Pushing {rel}...");
+        self.pending_pushes.insert(rel.clone());
 
         self.spawn_tracked(async move {
-            let client = penknife_gist::GistClient::new(token);
             let result =
                 sync::push(&client, store_snapshot.as_ref(), &filename, &content, force).await;
             let event = match result {
@@ -500,7 +517,7 @@ impl App {
     /// Inner pull implementation, parameterized by rel_path so bulk-pull
     /// can call it once per remote-newer file.
     pub(crate) fn do_sync_down_for(&mut self, rel: String) {
-        let Some(token) = self.token.clone() else {
+        let Some(client) = self.gist_client.clone() else {
             self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
@@ -530,7 +547,6 @@ impl App {
         self.status_message = format!("Pulling {rel}...");
 
         self.spawn_tracked(async move {
-            let client = penknife_gist::GistClient::new(token);
             let result = sync::pull(&client, &entry, &filename).await;
             let _ = tx.send(AsyncEvent::PullDone {
                 root: root_clone,
@@ -637,14 +653,13 @@ impl App {
     }
 
     pub(crate) fn do_delete_remote(&mut self, rel_path: String, root: PathBuf, remote_id: String) {
-        let Some(token) = self.token.clone() else {
+        let Some(client) = self.gist_client.clone() else {
             self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
         let tx = self.async_tx.clone();
         self.status_message = format!("Deleting gist for {rel_path}...");
         self.spawn_tracked(async move {
-            let client = penknife_gist::GistClient::new(token);
             let result = client.delete(&remote_id).await.map_err(|e| e.to_string());
             let _ = tx.send(AsyncEvent::DeleteDone {
                 root,
@@ -663,6 +678,12 @@ impl App {
             .and_then(|r| self.store.get(&r, &rel).cloned());
         if let Some(entry) = entry {
             self.copy_to_clipboard(&entry.url.clone());
+        } else if self.pending_pushes.contains(&rel) {
+            // A push for this file is already in flight (e.g. `c` right after
+            // `u`). Just queue the copy onto it - spawning a second push would
+            // race two "Pushed" messages and clobber "Copied".
+            self.pending_copy = Some(rel.clone());
+            self.status_message = format!("Push in progress for {rel}; will copy URL when done...");
         } else {
             // Queue the copy and trigger a push; PushDone will follow up.
             self.pending_copy = Some(rel.clone());
@@ -692,7 +713,7 @@ impl App {
     }
 
     pub(crate) fn do_diff(&mut self) {
-        let Some(token) = self.token.clone() else {
+        let Some(client) = self.gist_client.clone() else {
             self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
@@ -722,7 +743,6 @@ impl App {
         self.status_message = "Fetching remote for diff...".into();
 
         self.spawn_tracked(async move {
-            let client = penknife_gist::GistClient::new(token);
             let result = sync::full_status(&client, &local_for_task, &entry, &filename).await;
             let _ = tx.send(AsyncEvent::StatusCheck {
                 root,
@@ -749,7 +769,7 @@ impl App {
         if self.remote_check_inflight {
             return;
         }
-        let Some(token) = self.token.clone() else {
+        let Some(client) = self.gist_client.clone() else {
             return;
         };
         let Some(root) = self.active_root_path() else {
@@ -765,7 +785,6 @@ impl App {
         self.remote_check_inflight = true;
 
         self.spawn_tracked(async move {
-            let client = penknife_gist::GistClient::new(token);
             let result = crate::remote::check_remote(&client, &entries, |_, _| {}).await;
             let _ = tx.send(AsyncEvent::RemoteCheckDone {
                 root,
@@ -776,7 +795,7 @@ impl App {
     }
 
     pub(crate) fn start_hydration(&mut self) {
-        let Some(token) = self.token.clone() else {
+        let Some(client) = self.gist_client.clone() else {
             self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
@@ -800,7 +819,6 @@ impl App {
         }
 
         self.spawn_tracked(async move {
-            let client = penknife_gist::GistClient::new(token);
             let tx2 = tx.clone();
             let result = crate::hydrate::hydrate(
                 &client,
@@ -858,14 +876,13 @@ impl App {
         // certainly differs from local - fetch its real hash in the
         // background so the tree shows the divergence instead of a
         // fabricated "Synced".
-        if let Some(token) = self.token.clone() {
+        if let Some(client) = self.gist_client.clone() {
             let filename = rel.rsplit('/').next().unwrap_or(&rel).to_string();
             let local_content = std::fs::read_to_string(self.abs_path(&rel)).unwrap_or_default();
             let started = chrono::Utc::now();
             let tx = self.async_tx.clone();
             let rel_clone = rel.clone();
             self.spawn_tracked(async move {
-                let client = penknife_gist::GistClient::new(token);
                 let result = sync::full_status(&client, &local_content, &entry, &filename).await;
                 let _ = tx.send(AsyncEvent::StatusCheck {
                     root,
@@ -892,7 +909,7 @@ impl App {
     /// `rel_path`, and record the mapping. The fetch happens off-thread; the
     /// store write lands in the `LinkDone` handler.
     pub(crate) fn link_gist_to(&mut self, rel_path: String, raw: &str) {
-        let Some(token) = self.token.clone() else {
+        let Some(client) = self.gist_client.clone() else {
             self.status_message = crate::app::NO_TOKEN_HINT.into();
             return;
         };
@@ -910,7 +927,6 @@ impl App {
         let tx = self.async_tx.clone();
         self.status_message = format!("Linking {rel_path} → gist {remote_id}...");
         self.spawn_tracked(async move {
-            let client = penknife_gist::GistClient::new(token);
             let result = build_link_entry(&client, &remote_id, &filename, &local_content).await;
             let _ = tx.send(AsyncEvent::LinkDone {
                 root,
@@ -1083,6 +1099,62 @@ mod handler_tests {
         assert!(app.store.get(&root, "a.md").is_some());
     }
 
+    #[test]
+    fn push_done_clears_pending_push_and_skips_pushed_when_copying() {
+        // Belt-and-suspenders (fix #2): when a PushDone both lands the push
+        // and fulfils a queued copy, the intermediate "Pushed" line is never
+        // shown - so a later, redundant push's "Pushed" echo can't clobber
+        // "Copied". Also confirms the in-flight guard is cleared.
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        let h = sync::sha256_hex("alpha");
+        app.pending_copy = Some("a.md".into());
+        app.pending_pushes.insert("a.md".into());
+        app.handle_async_event(AsyncEvent::PushDone {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            result: Ok(entry("g1", &h, &h)),
+        });
+        assert!(app.pending_pushes.is_empty());
+        assert!(app.pending_copy.is_none());
+        // Either "Copied: …" or a clipboard error (headless CI), but never the
+        // intermediate "Pushed …" that the second push would race against.
+        assert!(!app.status_message.starts_with("Pushed"));
+    }
+
+    #[test]
+    fn copy_url_queues_onto_inflight_push_without_respawning() {
+        // Fix #1: pressing `c` while a push for the same fresh file is already
+        // in flight must not spawn a second push - it just queues the copy.
+        let _g = guard();
+        let (_d, mut app, _root) = app3();
+        select(&mut app, "a.md");
+        // Simulate a push already running for a.md (as `u` would have set).
+        app.pending_pushes.insert("a.md".into());
+        app.do_copy_url();
+        assert_eq!(app.pending_copy.as_deref(), Some("a.md"));
+        assert!(app.status_message.contains("Push in progress"));
+        // No second push was spawned (do_sync_up was skipped).
+        assert!(app.tasks.is_empty());
+    }
+
+    #[test]
+    fn do_sync_up_for_debounces_second_push_but_not_force() {
+        // A non-force push for a file already in flight is dropped (guards the
+        // double-`u` duplicate-gist race); a force push always proceeds.
+        let _g = guard();
+        let (_d, mut app, _root) = app3();
+        app.pending_pushes.insert("a.md".into());
+        app.do_sync_up_for("a.md".into(), false);
+        assert!(app.status_message.contains("Already pushing"));
+        // No task spawned - the guard returned before spawn_tracked.
+        assert!(app.tasks.is_empty());
+        // Force pushes bypass the guard; without a token it stops at the token
+        // check rather than the debounce, proving it got past the guard.
+        app.do_sync_up_for("a.md".into(), true);
+        assert!(!app.status_message.contains("Already pushing"));
+    }
+
     // ── PullDone ────────────────────────────────────────────────────────
 
     #[test]
@@ -1140,12 +1212,15 @@ mod handler_tests {
         let h = sync::sha256_hex("alpha");
         app.store.insert(&root, "a.md".into(), entry("g1", &h, &h));
         app.refresh_status_cache();
+        // A blocked push must also release the in-flight guard.
+        app.pending_pushes.insert("a.md".into());
         app.handle_async_event(AsyncEvent::PushBlocked {
             root: root.clone(),
             rel_path: "a.md".into(),
             remote_sha256: "different".into(),
             remote_updated_at: chrono::Utc::now(),
         });
+        assert!(app.pending_pushes.is_empty());
         assert!(matches!(
             app.mode,
             Mode::Confirm {

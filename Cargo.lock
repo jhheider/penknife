@@ -1997,7 +1997,7 @@ dependencies = [
 
 [[package]]
 name = "penknife"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "arboard",
  "chrono",
@@ -2030,7 +2030,7 @@ dependencies = [
 
 [[package]]
 name = "penknife-backend"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2039,7 +2039,7 @@ dependencies = [
 
 [[package]]
 name = "penknife-gist"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",

@@ -238,10 +238,20 @@ pub struct App {
     pub should_quit: bool,
     pub async_tx: AsyncSender,
     pub token: Option<String>,
+    /// Shared gist client, built once from `token`. Reused (cloned) by every
+    /// gist operation so the connection pool stays warm across pushes/pulls
+    /// instead of a cold TLS handshake per request. `None` when no token.
+    pub gist_client: Option<penknife_gist::GistClient>,
     pub active_root: usize,
     pub pending_ambiguous: Vec<AmbiguousMatch>,
     /// If set, copy the URL of this rel_path after the next successful PushDone.
     pub pending_copy: Option<String>,
+    /// rel_paths with a push currently in flight. Guards against spawning a
+    /// second, redundant push for a file while its first is still running
+    /// (e.g. pressing `c` right after `u` on a fresh file). Entries are added
+    /// when `do_sync_up_for` spawns and removed when the push resolves
+    /// (PushDone or PushBlocked).
+    pub pending_pushes: std::collections::HashSet<String>,
     /// Vertical scroll offset (rows) for the markdown preview pane.
     pub preview_scroll: u16,
     /// Vertical scroll offset (rows) for the diff pane.
@@ -361,6 +371,9 @@ impl App {
         };
 
         let token = penknife_gist::auth::resolve_token().ok();
+        // Build the shared gist client once so every op reuses its warm
+        // connection pool. The first network op (startup hydration) primes it.
+        let gist_client = token.clone().map(penknife_gist::GistClient::new);
 
         let start_mode = if config.roots.is_empty() {
             Mode::SetupRoot
@@ -397,9 +410,11 @@ impl App {
             should_quit: false,
             async_tx,
             token,
+            gist_client,
             active_root: 0,
             pending_ambiguous: Vec::new(),
             pending_copy: None,
+            pending_pushes: std::collections::HashSet::new(),
             preview_scroll: 0,
             diff_scroll: 0,
             tree_pane_rect: Rect::default(),

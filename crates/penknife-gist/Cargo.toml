@@ -1,14 +1,15 @@
 [package]
 name = "penknife-gist"
 description = "GitHub Gist API client with retry, rate-limit, and pagination handling"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
 
 [dependencies]
-penknife-backend = { path = "../penknife-backend", version = "0.2.0" }
+penknife-backend = { path = "../penknife-backend", version = "0.2.1" }
 async-trait = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 rustls = { workspace = true }
