@@ -94,7 +94,7 @@ pub(crate) fn new_for_test(root: &Path, tx: AsyncSender) -> App {
 
     let mut app = App {
         config,
-        store: Store::default(),
+        store: std::sync::Arc::new(Store::default()),
         files,
         tree_items: Vec::new(),
         tree_identifiers: Vec::new(),
@@ -142,6 +142,7 @@ pub(crate) fn new_for_test(root: &Path, tx: AsyncSender) -> App {
         remote_poll_failures: 0,
         last_local_sweep: Some(Instant::now()),
         startup_hydrate_done: false,
+        refresh_generation: 0,
     };
     app.refresh_status_cache();
     app.refresh_git_status();

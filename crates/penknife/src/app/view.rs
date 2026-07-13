@@ -2,14 +2,18 @@
 //! status cache → git status → tree rebuild), sorting, selection
 //! navigation, and mouse routing.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
 use super::{App, Mode, PaneFocus};
-use crate::scanner;
-use crate::store::FileEntry;
+use crate::git::GitStatus;
+use crate::scanner::{self, ScannedFile};
+use crate::store::{FileEntry, Store};
 use crate::sync;
 use crate::ui::tree;
 
@@ -34,6 +38,56 @@ fn status_for_file(abs_path: &std::path::Path, entry: Option<&FileEntry>) -> syn
     }
     let content = std::fs::read_to_string(abs_path).unwrap_or_default();
     sync::local_status(&content, entry)
+}
+
+/// Compute the per-file sync-status cache from a scanned file list and the
+/// (shared) store. Free function (no `&App`) so it runs on a blocking-pool
+/// thread during [`App::start_refresh`], reading through the `Arc<Store>` the
+/// task captured with an O(1) clone.
+fn compute_status_cache(
+    files: &[ScannedFile],
+    store: &Store,
+    root: &Path,
+) -> HashMap<String, sync::SyncStatus> {
+    let mut cache = HashMap::with_capacity(files.len());
+    for f in files {
+        let entry = store.get(root, &f.rel_path);
+        cache.insert(f.rel_path.clone(), status_for_file(&f.abs_path, entry));
+    }
+    cache
+}
+
+/// Resolve the active root's git repo root and per-file status, translated to
+/// active-root-relative keys (matching `ScannedFile.rel_path`). Free function
+/// (no `&App`) so the `git status` shell-out can run off the render thread.
+/// Returns `(None, empty)` when the root isn't inside a repo.
+fn compute_git_status(root: &Path) -> (Option<PathBuf>, HashMap<String, GitStatus>) {
+    let Some(repo) = crate::git::find_repo_root(root) else {
+        return (None, HashMap::new());
+    };
+    let raw = crate::git::status(&repo);
+    // raw is keyed by repo-relative path. Translate to active-root-relative:
+    // if root == repo it's a no-op; if root is a subdir, strip the prefix and
+    // drop entries outside our scanned root.
+    let prefix = root.strip_prefix(&repo).ok().map(|p| {
+        let mut s = p.to_string_lossy().to_string();
+        if !s.is_empty() && !s.ends_with('/') {
+            s.push('/');
+        }
+        s
+    });
+    let mut map = HashMap::new();
+    for (path, st) in raw {
+        let rel = match &prefix {
+            Some(p) if !p.is_empty() => match path.strip_prefix(p.as_str()) {
+                Some(r) => r.to_string(),
+                None => continue,
+            },
+            _ => path,
+        };
+        map.insert(rel, st);
+    }
+    (Some(repo), map)
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -149,49 +203,170 @@ impl App {
             .unwrap_or(sync::SyncStatus::NotGisted)
     }
 
-    /// Re-query git for the active root's state. Quietly clears the status
-    /// map if the root isn't in a repo or if git isn't on PATH.
+    /// Re-query git for the active root's state (synchronously). Quietly clears
+    /// the status map if the root isn't in a repo or if git isn't on PATH. The
+    /// live refresh path runs this off-thread via [`compute_git_status`]; this
+    /// method is kept for the synchronous startup/suspend contexts.
     pub(crate) fn refresh_git_status(&mut self) {
-        self.git_statuses.clear();
-        self.git_repo_root = None;
-        let Some(root) = self.current_root().cloned() else {
-            return;
+        let (repo, statuses) = match self.current_root().cloned() {
+            Some(root) => compute_git_status(&root),
+            None => (None, HashMap::new()),
         };
-        let Some(repo) = crate::git::find_repo_root(&root) else {
-            return;
-        };
-        let raw = crate::git::status(&repo);
-        // raw is keyed by repo-relative path. Translate to active-root-relative
-        // for tree lookups: if root == repo, this is a no-op; if root is a
-        // subdirectory of repo, strip the prefix and keep matching entries.
-        let prefix = root.strip_prefix(&repo).ok().map(|p| {
-            let mut s = p.to_string_lossy().to_string();
-            if !s.is_empty() && !s.ends_with('/') {
-                s.push('/');
-            }
-            s
-        });
-        for (path, st) in raw {
-            let rel = match &prefix {
-                Some(p) if !p.is_empty() => match path.strip_prefix(p.as_str()) {
-                    Some(r) => r.to_string(),
-                    None => continue, // entry outside our scanned root
-                },
-                _ => path,
-            };
-            self.git_statuses.insert(rel, st);
-        }
-        self.git_repo_root = Some(repo);
+        self.git_repo_root = repo;
+        self.git_statuses = statuses;
     }
 
-    /// Switch to a different root by index.
+    /// Refresh the active root off the render thread: the directory scan, the
+    /// per-file status reads, and the `git status` shell-out all run on a
+    /// blocking-pool thread and land later as an [`crate::event::AsyncEvent::RefreshDone`]
+    /// that [`App::apply_refresh`] adopts. The UI keeps drawing and stays
+    /// responsive throughout - even if the scan stalls on a slow mount or git
+    /// hangs.
+    ///
+    /// - `select`: jump to this rel_path once applied (post-rename).
+    /// - `only_if_changed`: drop the result unless the file set actually moved
+    ///   (the periodic local sweep sets this).
+    /// - `done_message`: status line to show after the refresh lands, winning
+    ///   over the recomputed default (an operation's "Done" message).
+    pub(crate) fn start_refresh(
+        &mut self,
+        select: Option<String>,
+        only_if_changed: bool,
+        done_message: Option<String>,
+    ) {
+        let Some(entry) = self.current_root_entry().cloned() else {
+            // No root configured: nothing to scan. Clear synchronously (cheap,
+            // no IO) so a torn-down root doesn't linger in the tree.
+            self.files.clear();
+            self.status_cache.clear();
+            self.git_statuses.clear();
+            self.git_repo_root = None;
+            self.rebuild_tree();
+            return;
+        };
+        if !entry.path.exists() {
+            // Surface a missing root explicitly rather than showing an empty
+            // tree with no explanation (the scanner's error tolerance is tuned
+            // for "a subdir vanished mid-walk," not "the root itself is gone").
+            self.status_message =
+                format!("Root missing: {} (check config.toml)", entry.path.display());
+            self.files.clear();
+            self.status_cache.clear();
+            self.git_statuses.clear();
+            self.git_repo_root = None;
+            self.rebuild_tree();
+            return;
+        }
+
+        self.refresh_generation += 1;
+        let generation = self.refresh_generation;
+        let root = entry.path.clone();
+        let ignore_patterns = entry.ignore.clone();
+        // O(1): the task shares the store through the Arc rather than deep-
+        // copying every tracked file's mapping on each sweep.
+        let store = std::sync::Arc::clone(&self.store);
+        // Cheap fingerprint of the current file set so an unchanged sweep can
+        // bail before reading any file contents or shelling out to git.
+        let prev_fingerprint = super::files_fingerprint(&self.files);
+        let tx = self.async_tx.clone();
+        self.spawn_tracked(async move {
+            let computed = tokio::task::spawn_blocking(move || {
+                let ignore = scanner::build_globset(&ignore_patterns);
+                let files = scanner::scan_directory(&root, &ignore).unwrap_or_default();
+                // Idle sweep with nothing moved on disk: skip the per-file
+                // content reads and the git shell-out entirely.
+                if only_if_changed && super::files_fingerprint(&files) == prev_fingerprint {
+                    return None;
+                }
+                let status_cache = compute_status_cache(&files, &store, &root);
+                let (git_repo_root, git_statuses) = compute_git_status(&root);
+                Some((root, files, status_cache, git_repo_root, git_statuses))
+            })
+            .await;
+            if let Ok(Some((root, files, status_cache, git_repo_root, git_statuses))) = computed {
+                let _ = tx.send(crate::event::AsyncEvent::RefreshDone {
+                    generation,
+                    root,
+                    files,
+                    status_cache,
+                    git_repo_root,
+                    git_statuses,
+                    select,
+                    only_if_changed,
+                    done_message,
+                });
+            }
+        });
+    }
+
+    /// Adopt the result of an off-thread refresh, dropping it if it's stale (a
+    /// newer refresh superseded it, or the active root changed) or a no-op
+    /// (`only_if_changed` and the file set is unchanged).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_refresh(
+        &mut self,
+        generation: u64,
+        root: PathBuf,
+        files: Vec<ScannedFile>,
+        status_cache: HashMap<String, sync::SyncStatus>,
+        git_repo_root: Option<PathBuf>,
+        git_statuses: HashMap<String, GitStatus>,
+        select: Option<String>,
+        only_if_changed: bool,
+        done_message: Option<String>,
+    ) {
+        // A later refresh already ran (or is queued): its result is the truth.
+        if generation != self.refresh_generation {
+            return;
+        }
+        // The user switched roots while this walk ran; it describes a root we
+        // no longer show.
+        if self.current_root().is_none_or(|r| r != &root) {
+            return;
+        }
+        // Periodic sweep: skip the rebuild (and the preview-scroll reset it
+        // entails) when nothing on disk actually moved.
+        if only_if_changed && !super::files_differ(&self.files, &files) {
+            return;
+        }
+
+        self.files = files;
+        self.status_cache = status_cache;
+        self.git_repo_root = git_repo_root;
+        self.git_statuses = git_statuses;
+        self.rebuild_tree();
+
+        match select {
+            // jump_to refreshes the preview and status bar itself.
+            Some(sel) => self.jump_to(&sel),
+            None => {
+                self.update_preview();
+                // The idle sweep leaves the status bar alone (matching the old
+                // synchronous sweep); explicit refreshes recompute it.
+                if !only_if_changed {
+                    self.update_status();
+                }
+            }
+        }
+
+        if let Some(msg) = done_message {
+            self.status_message = msg;
+        }
+    }
+
+    /// Switch to a different root by index. Clears the old root's tree
+    /// immediately (so stale entries don't linger) and kicks off the new root's
+    /// scan off-thread; the tree fills in when the refresh lands.
     pub(crate) fn switch_root(&mut self, index: usize) {
         if index < self.config.roots.len() {
             self.active_root = index;
-            if let Err(e) = self.refresh_files() {
-                self.status_message = format!("Refresh failed: {e}");
-            }
+            self.files.clear();
+            self.status_cache.clear();
+            self.git_statuses.clear();
+            self.git_repo_root = None;
+            self.rebuild_tree();
             self.update_status();
+            self.start_refresh(None, false, None);
         }
     }
 
@@ -670,10 +845,10 @@ mod tests {
     fn refresh_status_cache_reflects_store() {
         let (_d, mut app) = app3();
         let root = app.active_root_path().unwrap();
-        app.store
+        app.store_mut()
             .insert(&root, "a.md".into(), synced_entry("alpha"));
         // A gist whose recorded local hash differs from disk => LocalNewer.
-        app.store
+        app.store_mut()
             .insert(&root, "b.md".into(), synced_entry("stale-content"));
         app.refresh_status_cache();
         assert_eq!(app.cached_status("a.md"), sync::SyncStatus::Synced);
@@ -685,7 +860,7 @@ mod tests {
     fn refresh_status_for_updates_single_entry() {
         let (_d, mut app) = app3();
         let root = app.active_root_path().unwrap();
-        app.store
+        app.store_mut()
             .insert(&root, "a.md".into(), synced_entry("alpha"));
         app.refresh_status_for("a.md");
         assert_eq!(app.cached_status("a.md"), sync::SyncStatus::Synced);
