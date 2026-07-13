@@ -20,6 +20,7 @@ pub(crate) mod test_support;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ratatui::layout::Rect;
 use ratatui::style::Color;
@@ -210,7 +211,11 @@ pub enum ConfirmAction {
 
 pub struct App {
     pub config: Config,
-    pub store: Store,
+    /// Behind an `Arc` so an off-thread refresh can capture the store with an
+    /// O(1) clone instead of deep-copying every tracked file's mapping on each
+    /// (5-second) sweep. Mutations go through `Arc::make_mut`, which copies the
+    /// store only on the rare occasion a write races an in-flight refresh.
+    pub store: Arc<Store>,
     pub files: Vec<ScannedFile>,
     pub tree_items: Vec<tui_tree_widget::TreeItem<'static, String>>,
     pub tree_identifiers: Vec<String>,
@@ -307,6 +312,11 @@ pub struct App {
     pub last_local_sweep: Option<Instant>,
     /// One-shot: incremental hydration fires on the first tick.
     pub startup_hydrate_done: bool,
+    /// Monotonic counter bumped on every off-thread refresh spawn. A
+    /// [`crate::event::AsyncEvent::RefreshDone`] is applied only if it carries
+    /// the current value, so a slow refresh superseded by a newer one (root
+    /// switch, another sweep) is discarded instead of clobbering fresh state.
+    pub refresh_generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,6 +339,21 @@ fn files_differ(current: &[ScannedFile], scanned: &[ScannedFile]) -> bool {
     a.sort();
     b.sort();
     a != b
+}
+
+/// Order-independent fingerprint of a scanned file set: the XOR of per-file
+/// (rel_path, mtime) hashes. Lets the background sweep decide "did anything
+/// change on disk?" without cloning the file list or hashing file *contents* -
+/// so an idle tree costs one metadata walk per interval, not thousands of
+/// reads.
+pub(crate) fn files_fingerprint(files: &[ScannedFile]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    files.iter().fold(0u64, |acc, f| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        f.rel_path.hash(&mut h);
+        f.modified.hash(&mut h);
+        acc ^ h.finish()
+    })
 }
 
 /// Single-character keys reserved by the TUI's built-in bindings. User
@@ -390,7 +415,7 @@ impl App {
 
         let mut app = App {
             config,
-            store,
+            store: Arc::new(store),
             files,
             tree_items: Vec::new(),
             tree_identifiers: Vec::new(),
@@ -440,6 +465,7 @@ impl App {
             // interval.
             last_local_sweep: Some(Instant::now()),
             startup_hydrate_done: false,
+            refresh_generation: 0,
         };
         // Populate the per-file sync-status cache and git status before the
         // first tree build so leaf glyphs reflect the loaded store right away.
@@ -475,9 +501,11 @@ impl App {
             return;
         }
 
-        // Local sweep: rescan and refresh only when something changed on
-        // disk, so the common no-op case costs one directory walk and zero
-        // hashing.
+        // Local sweep: kick off an off-thread rescan on the configured
+        // cadence. The scan, the per-file status reads, and the git shell-out
+        // all run on a blocking-pool thread; the result is applied only if the
+        // file set actually changed (`only_if_changed`), so an idle no-op costs
+        // one background walk and never touches the render thread.
         let local_secs = self.config.poll.local_secs;
         if local_secs > 0
             && self
@@ -485,17 +513,7 @@ impl App {
                 .is_none_or(|t| t.elapsed() >= Duration::from_secs(local_secs))
         {
             self.last_local_sweep = Some(Instant::now());
-            if let Some(entry) = self.current_root_entry()
-                && entry.path.exists()
-            {
-                let ignore = scanner::build_globset(&entry.ignore);
-                if let Ok(scanned) = scanner::scan_directory(&entry.path, &ignore)
-                    && files_differ(&self.files, &scanned)
-                    && let Err(e) = self.refresh_files()
-                {
-                    self.status_message = format!("Refresh failed: {e}");
-                }
-            }
+            self.start_refresh(None, true, None);
         }
 
         // One-shot incremental hydration: pick up gists created or changed
@@ -567,6 +585,13 @@ impl App {
         } else {
             None
         }
+    }
+
+    /// Mutable access to the store. Clones it out of the `Arc` only on the
+    /// rare occasion a background refresh is sharing it at this instant
+    /// (copy-on-write); otherwise it's a no-op unwrap.
+    pub(crate) fn store_mut(&mut self) -> &mut Store {
+        Arc::make_mut(&mut self.store)
     }
 
     /// Get the absolute path for a rel_path.

@@ -382,10 +382,7 @@ impl App {
                     }
                     let new_sel = sel.min(self.config.roots.len().saturating_sub(1));
                     self.mode = Mode::RootSwitcher { selected: new_sel };
-                    if let Err(e) = self.refresh_files() {
-                        self.status_message = format!("Refresh failed: {e}");
-                    }
-                    self.update_status();
+                    self.start_refresh(None, false, None);
                 }
             }
             _ => {}
@@ -417,10 +414,10 @@ impl App {
                     return;
                 }
                 self.active_root = self.config.roots.len() - 1;
-                if let Err(e) = self.refresh_files() {
-                    self.status_message = format!("Refresh failed: {e}");
-                }
-                self.update_status();
+                self.files.clear();
+                self.status_cache.clear();
+                self.rebuild_tree();
+                self.start_refresh(None, false, None);
                 self.mode = Mode::Normal;
             }
             KeyCode::Char('q')
@@ -1288,7 +1285,7 @@ mod tests {
         let _g = guard();
         let (_d, mut app) = app_with_files();
         let root = app.active_root_path().unwrap();
-        app.store
+        app.store_mut()
             .insert(&root, "a.md".into(), entry("g1", "x", "x"));
         select(&mut app, "a.md");
         app.mode = Mode::DeleteMenu { selected: 2 }; // Both
