@@ -9,8 +9,32 @@ use ratatui::text::Span;
 
 use super::{App, Mode, PaneFocus};
 use crate::scanner;
+use crate::store::FileEntry;
 use crate::sync;
 use crate::ui::tree;
+
+/// Shown in the preview pane for a macOS online-only (dataless) file, in place
+/// of forcing a blocking cloud download to render bytes the user only glanced
+/// at while browsing.
+const DATALESS_PREVIEW: &str = "· Online-only file (stored in the cloud, not downloaded).\n\n\
+     Open it (e / o) to download and edit it.";
+
+/// Sync status for one scanned file, without ever forcing a cloud placeholder
+/// to materialize. An online-only (dataless) tracked file is reported as
+/// `Synced`: it can't have been edited locally since it was evicted to the
+/// cloud (editing requires the bytes, which materializes it), so its resident
+/// state matches its last sync. A later remote poll still flags it
+/// `RemoteNewer` if the gist moved ahead - same as for a resident synced file.
+fn status_for_file(abs_path: &std::path::Path, entry: Option<&FileEntry>) -> sync::SyncStatus {
+    if entry.is_none() {
+        return sync::SyncStatus::NotGisted;
+    }
+    if crate::fsutil::is_dataless(abs_path) {
+        return sync::SyncStatus::Synced;
+    }
+    let content = std::fs::read_to_string(abs_path).unwrap_or_default();
+    sync::local_status(&content, entry)
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 struct StatusCounts {
@@ -101,12 +125,7 @@ impl App {
         self.status_cache.reserve(self.files.len());
         for f in &self.files {
             let entry = self.store.get(&root, &f.rel_path);
-            let status = if entry.is_some() {
-                let content = std::fs::read_to_string(&f.abs_path).unwrap_or_default();
-                sync::local_status(&content, entry)
-            } else {
-                sync::SyncStatus::NotGisted
-            };
+            let status = status_for_file(&f.abs_path, entry);
             self.status_cache.insert(f.rel_path.clone(), status);
         }
     }
@@ -118,12 +137,7 @@ impl App {
             return;
         };
         let entry = self.store.get(&root, rel_path);
-        let status = if entry.is_some() {
-            let content = std::fs::read_to_string(self.abs_path(rel_path)).unwrap_or_default();
-            sync::local_status(&content, entry)
-        } else {
-            sync::SyncStatus::NotGisted
-        };
+        let status = status_for_file(&self.abs_path(rel_path), entry);
         self.status_cache.insert(rel_path.to_string(), status);
     }
 
@@ -184,7 +198,15 @@ impl App {
     pub fn update_preview(&mut self) {
         if let Some(ref rel) = self.selected_file() {
             let path = self.abs_path(rel);
-            self.preview_content = std::fs::read_to_string(&path).unwrap_or_default();
+            // Never force an online-only placeholder to download just because
+            // the cursor landed on it - arrow-key browsing would otherwise
+            // trigger a cascade of cloud fetches (and hang if offline). Show a
+            // hint instead; opening in `$EDITOR` materializes it on demand.
+            self.preview_content = if crate::fsutil::is_dataless(&path) {
+                DATALESS_PREVIEW.to_string()
+            } else {
+                std::fs::read_to_string(&path).unwrap_or_default()
+            };
         } else {
             self.preview_content.clear();
         }
