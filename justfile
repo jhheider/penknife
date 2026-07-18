@@ -1,3 +1,5 @@
+set fallback
+
 import '../justfile'
 
 [private]
