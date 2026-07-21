@@ -207,7 +207,7 @@ cargo clippy          # lint
 cargo fmt             # format (run before committing)
 ```
 
-House style: em dashes and en dashes are a CI error, in code and prose alike. Use a comma, colon, parenthetical, or a plain hyphen instead.
+House style: em dashes and en dashes are a CI error, in code and prose alike. Rephrase with a comma, colon, parenthetical, or separate sentence; don't substitute a plain hyphen for a dash, it reads wrong even though it passes the gate.
 
 ## License
 
