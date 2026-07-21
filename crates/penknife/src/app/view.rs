@@ -28,7 +28,7 @@ const DATALESS_PREVIEW: &str = "· Online-only file (stored in the cloud, not do
 /// `Synced`: it can't have been edited locally since it was evicted to the
 /// cloud (editing requires the bytes, which materializes it), so its resident
 /// state matches its last sync. A later remote poll still flags it
-/// `RemoteNewer` if the gist moved ahead - same as for a resident synced file.
+/// `RemoteNewer` if the gist moved ahead, same as for a resident synced file.
 fn status_for_file(abs_path: &std::path::Path, entry: Option<&FileEntry>) -> sync::SyncStatus {
     if entry.is_none() {
         return sync::SyncStatus::NotGisted;
@@ -126,7 +126,7 @@ impl App {
                 self.files.sort_by(|a, b| b.rel_path.cmp(&a.rel_path));
             }
             SortMode::Status => {
-                // Status rank uses the cached per-file sync state - no
+                // Status rank uses the cached per-file sync state, no
                 // disk reads inside the sort comparator.
                 let cache = &self.status_cache;
                 self.files.sort_by(|a, b| {
@@ -185,7 +185,7 @@ impl App {
     }
 
     /// Recompute one file's cached sync status (one disk read) after a store
-    /// entry changed - push/pull/check results - without rescanning the tree.
+    /// entry changed (push/pull/check results) without rescanning the tree.
     pub(crate) fn refresh_status_for(&mut self, rel_path: &str) {
         let Some(root) = self.current_root().cloned() else {
             return;
@@ -220,7 +220,7 @@ impl App {
     /// per-file status reads, and the `git status` shell-out all run on a
     /// blocking-pool thread and land later as an [`crate::event::AsyncEvent::RefreshDone`]
     /// that [`App::apply_refresh`] adopts. The UI keeps drawing and stays
-    /// responsive throughout - even if the scan stalls on a slow mount or git
+    /// responsive throughout, even if the scan stalls on a slow mount or git
     /// hangs.
     ///
     /// See [`Refresh`] for the three call-site intents (startup / sweep /
@@ -392,7 +392,7 @@ impl App {
         if let Some(ref rel) = self.selected_file() {
             let path = self.abs_path(rel);
             // Never force an online-only placeholder to download just because
-            // the cursor landed on it - arrow-key browsing would otherwise
+            // the cursor landed on it; arrow-key browsing would otherwise
             // trigger a cascade of cloud fetches (and hang if offline). Show a
             // hint instead; opening in `$EDITOR` materializes it on demand.
             self.preview_content = if crate::fsutil::is_dataless(&path) {
@@ -492,7 +492,7 @@ impl App {
                 .as_ref()
                 .and_then(|r| self.store.get(r, rel))
                 .cloned();
-            // Cached status - populated in refresh_files. One disk read per
+            // Cached status, populated in refresh_files. One disk read per
             // file per refresh instead of one per status-bar update.
             let status = self.cached_status(rel);
             self.status_color = status.color();

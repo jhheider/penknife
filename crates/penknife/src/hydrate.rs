@@ -40,7 +40,7 @@ pub struct HydrationOutcome {
 /// for persisting `store` after merging results.
 ///
 /// `since`, when set, restricts the gist listing to those updated after the
-/// timestamp (GitHub's `since=` filter) - an incremental walk that avoids
+/// timestamp (GitHub's `since=` filter): an incremental walk that avoids
 /// re-listing the whole account every time. A new account, or a forced full
 /// re-scan, passes `None`.
 pub async fn hydrate(
@@ -89,7 +89,7 @@ pub async fn hydrate(
         matched: 0,
     });
 
-    // Phase 2: Build reverse index - filename → [Gist]
+    // Phase 2: Build reverse index: filename → [Gist]
     let mut by_filename: HashMap<String, Vec<&Gist>> = HashMap::new();
     for gist in &all_gists {
         for filename in gist.files.keys() {
@@ -151,14 +151,14 @@ pub async fn hydrate(
 
         if gists.len() == 1 && locals == 1 {
             // Unique filename match. Fetch the gist's actual content so the
-            // stored remote hash is real - recording the local hash here
+            // stored remote hash is real; recording the local hash here
             // would fabricate a "Synced" state even when the remote differs,
             // and the next push would silently overwrite it.
             let gist = gists[0];
             let local_content = match std::fs::read_to_string(&file.abs_path) {
                 Ok(c) => c,
                 Err(_) => {
-                    // File disappeared or unreadable - skip rather than fabricate empty match.
+                    // File disappeared or unreadable; skip rather than fabricate empty match.
                     continue;
                 }
             };
@@ -229,7 +229,7 @@ pub async fn hydrate(
 
         if size_matches.len() == 1 {
             // Size narrowed it to one candidate, but size-similar ≠
-            // identical - fetch the content so the remote hash is real.
+            // identical; fetch the content so the remote hash is real.
             let gist = size_matches[0];
             if let Some(entry) = verified_entry(client, &gist.id, &filename, &local_content).await {
                 store.insert(root, file.rel_path.clone(), entry);
@@ -348,7 +348,7 @@ mod tests {
     }
 
     /// A unique filename match must record the gist's *actual* content hash,
-    /// not assume remote == local - otherwise divergent remotes hydrate
+    /// not assume remote == local; otherwise divergent remotes hydrate
     /// straight into a fabricated "Synced" state.
     #[tokio::test]
     async fn unique_match_records_real_remote_hash() {

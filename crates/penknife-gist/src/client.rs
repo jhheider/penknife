@@ -38,7 +38,7 @@ pub struct GistClient {
 /// Install ring as the process-wide rustls crypto provider (idempotent).
 /// reqwest is built with `rustls-no-provider` to keep the heavy aws-lc-rs C
 /// library out of the dependency tree, so a provider must be installed before
-/// the first client is built - covers both the app and tests.
+/// the first client is built; covers both the app and tests.
 fn ensure_crypto_provider() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
@@ -75,7 +75,7 @@ impl GistClient {
     }
 
     /// Send a GET request with retries on transient failures and rate-limit awareness.
-    /// Only safe for idempotent requests - do not use for POST/PATCH/DELETE.
+    /// Only safe for idempotent requests; do not use for POST/PATCH/DELETE.
     async fn get_with_retry(&self, url: &str) -> Result<Response> {
         let mut attempt = 0u32;
         loop {
@@ -104,7 +104,7 @@ impl GistClient {
                     });
                 }
                 Err(e) if attempt < MAX_RETRIES => {
-                    // Network-level failure - retry with backoff.
+                    // Network-level failure; retry with backoff.
                     tokio::time::sleep(backoff(attempt)).await;
                     let _ = e;
                 }
@@ -243,7 +243,7 @@ impl GistClient {
     }
 
     /// Rename a file within a gist. GitHub's PATCH /gists/:id endpoint
-    /// accepts a `{"files": {"<old>": {"filename": "<new>"}}}` shape - note
+    /// accepts a `{"files": {"<old>": {"filename": "<new>"}}}` shape, note
     /// the old name is the map *key*, the new name is in the value.
     pub async fn rename_file(&self, id: &str, old_name: &str, new_name: &str) -> Result<Gist> {
         let body = serde_json::json!({
@@ -404,7 +404,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_content_returns_inline_content_without_fetching() {
-        // Unreachable base URL - any HTTP request would error out.
+        // Unreachable base URL; any HTTP request would error out.
         let client = GistClient::with_base_url("t".into(), "http://127.0.0.1:1".into());
         let gist = gist_from_json(gist_json("g1", "a.md", Some("hello"), false, 5, None));
         let got = client.file_content(&gist, "a.md").await.unwrap();

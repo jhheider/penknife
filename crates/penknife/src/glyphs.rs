@@ -110,7 +110,7 @@ fn pick_profile() -> &'static Glyphs {
 
 /// A single-column spinner frame for the given tick, cycling as `tick`
 /// advances. Braille under the unicode profiles, a 7-bit `|/-\` fallback under
-/// ASCII - both one terminal column wide, so the scanning indicator's layout
+/// ASCII, both one terminal column wide, so the scanning indicator's layout
 /// stays put frame to frame.
 pub fn spinner_frame(tick: usize) -> &'static str {
     const BRAILLE: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

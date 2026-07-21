@@ -10,7 +10,7 @@ use color_eyre::eyre::{Result, WrapErr};
 pub struct Root {
     pub path: PathBuf,
     /// Glob patterns (gitignore-style, matched against rel_path) of files to
-    /// skip in the tree. Recursive patterns require `**` - `*.md` matches a
+    /// skip in the tree. Recursive patterns require `**`; `*.md` matches a
     /// single path segment, not subdirectories.
     #[serde(default)]
     pub ignore: Vec<String>,

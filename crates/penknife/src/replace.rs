@@ -41,7 +41,7 @@ pub struct ApplyResult {
     pub drifted: usize,
     /// Files we couldn't read or write. The string is the OS error.
     pub errors: Vec<(PathBuf, String)>,
-    /// Distinct files that were modified - useful for refresh + status text.
+    /// Distinct files that were modified; useful for refresh + status text.
     pub files_changed: Vec<PathBuf>,
 }
 
@@ -58,7 +58,7 @@ pub fn scan_opts(scope: &Path, root: &Path, query: &str, ignore_case: bool) -> V
     if query.is_empty() {
         return Vec::new();
     }
-    // Find/replace honors no ignore patterns of its own - if the user has
+    // Find/replace honors no ignore patterns of its own; if the user has
     // narrowed the picker (via [ignore] in config) those exclusions belong
     // to the *tree*, not to substring search across the directory.
     let files = match scanner::scan_directory(scope, &globset::GlobSet::empty()) {

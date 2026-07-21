@@ -219,7 +219,7 @@ fn suspend_and_run_alias(
     );
     let _ = io::stdout().flush();
     enable_raw_mode()?;
-    // Drain whatever event arrives - Key, Mouse, Resize all dismiss.
+    // Drain whatever event arrives: Key, Mouse, Resize all dismiss.
     let _ = crossterm::event::read();
     // raw mode stays on for the TUI; we don't need to toggle it off again.
     io::stdout().execute(EnterAlternateScreen)?;

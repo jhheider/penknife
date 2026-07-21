@@ -248,7 +248,7 @@ pub struct App {
     /// concatenated text equals `status_message`, the renderer uses these for
     /// a multi-color dashboard; otherwise it falls back to the flat string +
     /// `status_color`. This means transient setters that touch only
-    /// `status_message` don't need to clear spans - the mismatch invalidates
+    /// `status_message` don't need to clear spans; the mismatch invalidates
     /// the rich version automatically.
     pub status_spans: Vec<Span<'static>>,
     pub picker_editor: LineEditor,
@@ -300,7 +300,7 @@ pub struct App {
     /// SearchResults jump list.
     pub search_query: String,
     pub search_matches: Vec<crate::replace::ReplaceMatch>,
-    /// Multi-file find-and-replace state - populated as the user moves
+    /// Multi-file find-and-replace state, populated as the user moves
     /// through ReplaceQuery → ReplaceTarget → ReplaceReview.
     pub replace_query: String,
     pub replace_target: String,
@@ -383,7 +383,7 @@ pub(crate) fn files_fingerprint(files: &[ScannedFile]) -> u64 {
 }
 
 /// Single-character keys reserved by the TUI's built-in bindings. User
-/// aliases cannot shadow these - conflicting entries are dropped at load
+/// aliases cannot shadow these; conflicting entries are dropped at load
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', 'M',
@@ -533,7 +533,7 @@ impl App {
         // file set actually changed (`only_if_changed`), so an idle no-op costs
         // one background walk and never touches the render thread.
         // Hold off all background cadence while the startup scan is still in
-        // flight - the file list isn't ready, and a sweep would supersede the
+        // flight: the file list isn't ready, and a sweep would supersede the
         // initial scan (leaving the indicator stuck).
         if self.scanning {
             return;

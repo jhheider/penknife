@@ -19,7 +19,7 @@ use color_eyre::eyre::Result;
 pub struct RemoteCheckOutcome {
     /// Store entries whose remote-side fields need updating, keyed by
     /// rel_path. Includes both real divergences and bare `updated_at`
-    /// refreshes (description edits, first-ever checks) - persisting the
+    /// refreshes (description edits, first-ever checks), persisting the
     /// latter is what keeps future checks cheap.
     pub updated: Vec<(String, FileEntry)>,
     /// rel_paths whose remote content now differs from the last-synced state.
@@ -58,7 +58,7 @@ pub async fn check_remote(
             continue; // unchanged since we last looked
         }
 
-        // updated_at moved (or was never recorded) - fetch the real content.
+        // updated_at moved (or was never recorded); fetch the real content.
         // The listing omits content, so this needs a per-gist GET.
         let full = client.get(&entry.remote_id).await?;
         let filename = rel.rsplit('/').next().unwrap_or(rel);
@@ -88,7 +88,7 @@ pub async fn check_remote(
 /// Decide whether a freshly checked entry may overwrite the live store
 /// entry. Rejects when the mapping changed identity (re-push under a new
 /// gist, delete+recreate) or when a push/pull completed after the check
-/// started - in both cases the live entry is the newer truth.
+/// started; in both cases the live entry is the newer truth.
 pub fn should_apply_update(
     current: Option<&FileEntry>,
     refreshed: &FileEntry,
@@ -218,7 +218,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(vec![listed_gist("g1", "a.md")]))
             .mount(&server)
             .await;
-        // A per-gist GET would 404 and fail the run - proves we skipped it.
+        // A per-gist GET would 404 and fail the run; proves we skipped it.
         let client = GistClient::with_base_url("t".into(), server.uri());
         let mut entries = BTreeMap::new();
         entries.insert("a.md".to_string(), {

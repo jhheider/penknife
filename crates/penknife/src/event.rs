@@ -26,9 +26,9 @@ pub struct HydrationDoneData {
     pub matched: usize,
     pub ambiguous: Vec<AmbiguousMatch>,
     pub store: Box<Store>,
-    /// The root this walk covered - the per-root hydration cursor is keyed by it.
+    /// The root this walk covered; the per-root hydration cursor is keyed by it.
     pub root: PathBuf,
-    /// The timestamp to record as `root`'s new hydration cursor - captured
+    /// The timestamp to record as `root`'s new hydration cursor, captured
     /// when the walk began, so gists created mid-walk are caught on the next
     /// pass rather than skipped.
     pub new_cursor: chrono::DateTime<chrono::Utc>,
@@ -78,7 +78,7 @@ pub enum AsyncEvent {
     /// user resolution.
     HydrationDone(std::result::Result<HydrationDoneData, String>),
     /// Remote status check result (from the diff view's fetch). Carries the
-    /// observed remote state so it can be written back to the store - a
+    /// observed remote state so it can be written back to the store, a
     /// diff is also a remote check.
     StatusCheck {
         root: PathBuf,
@@ -133,7 +133,7 @@ pub enum AsyncEvent {
         /// (used after a rename so the moved file stays selected).
         select: Option<String>,
         /// If set, the result is discarded unless the file set actually
-        /// differs from what's shown - the periodic local sweep uses this so
+        /// differs from what's shown; the periodic local sweep uses this so
         /// idle browsing doesn't rebuild the tree (or reset preview scroll)
         /// every interval.
         only_if_changed: bool,

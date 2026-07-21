@@ -36,7 +36,7 @@ impl App {
                         self.rebuild_tree();
                         // Follow up on a queued copy-url request, if it's for
                         // this file. Skip the intermediate "Pushed" message when
-                        // a copy is about to supersede it - otherwise a second,
+                        // a copy is about to supersede it; otherwise a second,
                         // later PushDone's "Pushed" line would clobber "Copied".
                         if self.pending_copy.as_ref().is_some_and(|p| *p == rel_path) {
                             self.pending_copy = None;
@@ -68,7 +68,7 @@ impl App {
                     ) {
                         Ok(PullApply::DriftRefused) => {
                             self.status_message = format!(
-                                "{rel_path} changed on disk during pull - not overwriting. Pull again to retry."
+                                "{rel_path} changed on disk during pull; not overwriting. Pull again to retry."
                             );
                         }
                         Ok(PullApply::Applied) => {
@@ -116,7 +116,7 @@ impl App {
                 }
                 self.mode = Mode::Confirm {
                     message: format!(
-                        "Remote gist for {rel_path} changed since last sync. Force push (overwrites remote - use D to diff first)?"
+                        "Remote gist for {rel_path} changed since last sync. Force push (overwrites remote; use D to diff first)?"
                     ),
                     action: ConfirmAction::ForcePush {
                         rel_path: rel_path.clone(),
@@ -237,7 +237,7 @@ impl App {
                 result,
             } => match result {
                 Ok(full) => {
-                    // A diff fetch is also a remote observation - persist it
+                    // A diff fetch is also a remote observation; persist it
                     // so the tree reflects any divergence it revealed. Skip
                     // if the entry synced while the fetch was in flight.
                     if sync_apply::record_observation(
@@ -310,7 +310,7 @@ impl App {
                     self.status_message = if synced {
                         format!("Linked {rel_path} → {url} (in sync)")
                     } else {
-                        format!("Linked {rel_path} → {url} (differs - D to diff, u/d to reconcile)")
+                        format!("Linked {rel_path} → {url} (differs; D to diff, u/d to reconcile)")
                     };
                 }
                 Err(e) => {
@@ -710,7 +710,7 @@ impl App {
             self.copy_to_clipboard(&entry.url.clone());
         } else if self.pending_pushes.contains(&rel) {
             // A push for this file is already in flight (e.g. `c` right after
-            // `u`). Just queue the copy onto it - spawning a second push would
+            // `u`). Just queue the copy onto it; spawning a second push would
             // race two "Pushed" messages and clobber "Copied".
             self.pending_copy = Some(rel.clone());
             self.status_message = format!("Push in progress for {rel}; will copy URL when done...");
@@ -906,7 +906,7 @@ impl App {
             self.status_message = format!("Mapped {rel} → {cand_url}");
         }
         // The candidates here failed the content match, so the remote almost
-        // certainly differs from local - fetch its real hash in the
+        // certainly differs from local; fetch its real hash in the
         // background so the tree shows the divergence instead of a
         // fabricated "Synced".
         if let Some(client) = self.gist_client.clone() {
@@ -983,7 +983,7 @@ async fn build_link_entry(
     let gist = client.get(remote_id).await?;
     // Prefer the gist file whose name matches the local basename; fall back to
     // the sole file in a single-file gist. A multi-file gist with no name
-    // match is genuinely ambiguous - refuse rather than guess.
+    // match is genuinely ambiguous; refuse rather than guess.
     let chosen = if gist.files.contains_key(local_filename) {
         local_filename.to_string()
     } else if gist.files.len() == 1 {
@@ -1136,7 +1136,7 @@ mod handler_tests {
     fn push_done_clears_pending_push_and_skips_pushed_when_copying() {
         // Belt-and-suspenders (fix #2): when a PushDone both lands the push
         // and fulfils a queued copy, the intermediate "Pushed" line is never
-        // shown - so a later, redundant push's "Pushed" echo can't clobber
+        // shown, so a later, redundant push's "Pushed" echo can't clobber
         // "Copied". Also confirms the in-flight guard is cleared.
         let _g = guard();
         let (_d, mut app, root) = app3();
@@ -1158,7 +1158,7 @@ mod handler_tests {
     #[test]
     fn copy_url_queues_onto_inflight_push_without_respawning() {
         // Fix #1: pressing `c` while a push for the same fresh file is already
-        // in flight must not spawn a second push - it just queues the copy.
+        // in flight must not spawn a second push; it just queues the copy.
         let _g = guard();
         let (_d, mut app, _root) = app3();
         select(&mut app, "a.md");
@@ -1180,7 +1180,7 @@ mod handler_tests {
         app.pending_pushes.insert("a.md".into());
         app.do_sync_up_for("a.md".into(), false);
         assert!(app.status_message.contains("Already pushing"));
-        // No task spawned - the guard returned before spawn_tracked.
+        // No task spawned; the guard returned before spawn_tracked.
         assert!(app.tasks.is_empty());
         // Force pushes bypass the guard; without a token it stops at the token
         // check rather than the debounce, proving it got past the guard.

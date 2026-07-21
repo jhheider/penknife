@@ -244,7 +244,7 @@ impl App {
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q')
         );
         // Stray keys (spacebar, arrow keys, random letters) leave the dialog
-        // alone - only an explicit confirm/cancel dismisses.
+        // alone; only an explicit confirm/cancel dismisses.
         if !confirmed && !cancelled {
             return;
         }
@@ -400,7 +400,7 @@ impl App {
                         selected: self.active_root,
                     };
                 }
-                // SetupRoot: no escape - must configure a root or Ctrl+Q to quit.
+                // SetupRoot: no escape; must configure a root or Ctrl+Q to quit.
             }
             KeyCode::Enter => {
                 let raw = self.input_editor.content.trim().to_string();

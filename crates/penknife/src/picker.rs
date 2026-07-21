@@ -3,7 +3,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use crate::scanner::ScannedFile;
 
-/// One result from the picker - full rel_path, fuzzy score, and the
+/// One result from the picker: full rel_path, fuzzy score, and the
 /// character indices (into rel_path) that matched the query.
 #[derive(Debug, Clone)]
 pub struct PickerMatch {

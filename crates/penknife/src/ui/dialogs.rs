@@ -724,7 +724,7 @@ pub fn render_replace_review(f: &mut Frame, area: Rect, app: &App, selected: usi
         Span::styled("' → '", dim),
         Span::styled(
             if app.replace_target.is_empty() {
-                "(empty - delete matches)".to_string()
+                "(empty; delete matches)".to_string()
             } else {
                 app.replace_target.clone()
             },

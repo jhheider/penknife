@@ -122,8 +122,8 @@ pub enum PushOutcome {
 /// an update first fetches the remote and refuses to overwrite content that
 /// changed since the last sync (lost-update guard).
 ///
-/// On create, the gist's description is set to `filename` (the basename) - not
-/// the rel_path - because gists are shared to game-specific channels where the
+/// On create, the gist's description is set to `filename` (the basename), not
+/// the rel_path, because gists are shared to game-specific channels where the
 /// containing tree's directory structure leaks irrelevant context.
 pub async fn push(
     client: &GistClient,
@@ -338,7 +338,7 @@ mod tests {
     #[tokio::test]
     async fn push_force_skips_the_divergence_check() {
         let server = MockServer::start().await;
-        // Only PATCH is mocked - a force push must not GET first.
+        // Only PATCH is mocked; a force push must not GET first.
         Mock::given(method("PATCH"))
             .and(path("/gists/g1"))
             .respond_with(

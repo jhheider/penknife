@@ -53,7 +53,7 @@ pub struct Cli {
 pub enum Command {
     /// Render a markdown file to HTML on stdout
     Render {
-        /// Markdown file, or - for stdin. Omit to read piped stdin.
+        /// Markdown file, or `-` for stdin. Omit to read piped stdin.
         file: Option<String>,
         /// Wrap the output in a full HTML document (for opening in a browser)
         #[arg(short = 's', long)]

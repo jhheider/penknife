@@ -5,15 +5,15 @@
 //! "online-only" placeholder files on disk: the metadata is local but the
 //! bytes live in the cloud. Such a file carries the `SF_DATALESS` flag and has
 //! zero data blocks. Calling `read()` on it triggers an on-demand download and
-//! *blocks* until the provider materializes it - forever if the provider is
+//! *blocks* until the provider materializes it, forever if the provider is
 //! offline or unreachable. penknife scans whole synced folders and reads every
 //! tracked file to compute sync glyphs, so a single unreachable placeholder
 //! used to hang the entire UI before its first frame (unquittable).
 //!
 //! The rule: never let a passive, bulk read (status glyphs, preview) force a
 //! placeholder to materialize. Explicit user actions (push/pull/diff/open in
-//! `$EDITOR`) may still trigger a download - that is the user asking for the
-//! bytes - but browsing and background refreshes must not.
+//! `$EDITOR`) may still trigger a download, that is the user asking for the
+//! bytes, but browsing and background refreshes must not.
 
 use std::path::Path;
 

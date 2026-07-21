@@ -25,7 +25,7 @@ struct Node<'a> {
 }
 
 /// Build a hierarchical tree of items from scanned files. Supports arbitrary
-/// directory depth - components are walked recursively rather than truncated.
+/// directory depth; components are walked recursively rather than truncated.
 /// `status_cache` carries the precomputed per-file sync status (so the tree
 /// build doesn't re-read every file). `git_statuses` is optional per-file
 /// git state; empty map = no git column.
@@ -49,7 +49,7 @@ pub fn build_tree<'a>(
 
     // Pre-pass: recursively tally each directory's subtree by sync status, so
     // directory rows can trail a rolled-up summary like `[9 3 1 12]`. Computed
-    // once here off the cached statuses - no IO.
+    // once here off the cached statuses, no IO.
     let mut dir_counts: HashMap<String, [usize; 5]> = HashMap::new();
     tally_dirs(&root_node, "", status_cache, &mut dir_counts);
 
@@ -183,7 +183,7 @@ fn format_leaf(rel_path: &str, status: SyncStatus, git: Option<GitStatus>) -> Li
 
     let (git_glyph, git_color) = match git {
         Some(s) if s.staged && s.modified => {
-            // Staged AND further unstaged changes - show modified (the
+            // Staged AND further unstaged changes; show modified (the
             // more-actionable signal), but in a brighter color.
             (g.git_modified, Color::Yellow)
         }
@@ -214,7 +214,7 @@ fn format_directory(name: &str, counts: &[usize; 5]) -> Line<'static> {
 
     // Trailing summary: the subtree's non-zero status counts as color-only
     // numbers in a bracketed block, e.g. `[9 3 1 12]`. The color *is* the
-    // legend - green synced, yellow local-newer, blue remote-newer, red
+    // legend: green synced, yellow local-newer, blue remote-newer, red
     // conflict, grey not-gisted (matching the status bar and file icons).
     // Brackets are dimmed so they frame without competing. A fully-empty
     // subtree (no files anywhere) shows nothing.
