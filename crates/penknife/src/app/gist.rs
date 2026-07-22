@@ -275,9 +275,13 @@ impl App {
                             format!("Deleted, but saving local state failed: {e}");
                         return;
                     }
-                    self.status_message = format!("Deleted gist for {rel_path}");
                     self.rebuild_tree();
                     self.update_status();
+                    // Set the confirmation last: update_status() overwrites
+                    // status_message with the selected file's status line
+                    // whenever a file is selected, which would otherwise
+                    // clobber this message before the user ever sees it.
+                    self.status_message = format!("Deleted gist for {rel_path}");
                 }
                 Err(e) => {
                     self.status_message = format!("Delete failed: {e}");
@@ -1394,9 +1398,29 @@ mod handler_tests {
             rel_path: "a.md".into(),
             result: Ok(()),
         });
-        // The mapping is gone; the transient "Deleted" message is immediately
-        // replaced by the refreshed status dashboard (update_status runs last).
+        // The mapping is gone, and the confirmation survives: the handler sets
+        // it *after* update_status() so it isn't clobbered by the selected
+        // file's status line.
         assert!(app.store.get(&root, "a.md").is_none());
+        assert_eq!(app.status_message, "Deleted gist for a.md");
+    }
+
+    #[test]
+    fn delete_done_ok_confirmation_survives_with_file_selected() {
+        let _g = guard();
+        let (_d, mut app, root) = app3();
+        app.store
+            .insert(&root, "a.md".into(), entry("g1", "x", "x"));
+        // Select the just-deleted file so update_status() would set its
+        // status line; the "Deleted gist" confirmation must still win.
+        select(&mut app, "a.md");
+        app.handle_async_event(AsyncEvent::DeleteDone {
+            root: root.clone(),
+            rel_path: "a.md".into(),
+            result: Ok(()),
+        });
+        assert!(app.store.get(&root, "a.md").is_none());
+        assert_eq!(app.status_message, "Deleted gist for a.md");
     }
 
     #[test]
