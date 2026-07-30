@@ -1,7 +1,7 @@
 [package]
 name = "penknife"
 description = "Git-style remotes for your documents: sync a folder of markdown to GitHub Gists, track drift per file, and copy anything as rich text to paste elsewhere"
-version = "0.3.0"
+version = "0.3.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -9,6 +9,25 @@ authors.workspace = true
 readme.workspace = true
 keywords = ["tui", "markdown", "gist", "notes", "sync"]
 categories = ["command-line-utilities", "text-processing"]
+
+# rust-ci's release.yml ships assets as `penknife-{os}-{arch}.{ext}` (no
+# version, no full target triple), which matches none of cargo-binstall's
+# default guess templates, so `cargo binstall penknife` silently fell back
+# to compiling from source. archive-suffix resolves against every extension
+# binstall knows for the given pkg-fmt (both .tgz and .tar.gz for Tgz), so
+# this matches the actual .tar.gz assets without hardcoding it.
+#
+# { name } (crate name), not { bin }: binstall only resolves { bin } later,
+# in bin-dir, after a specific binary is known - it isn't available when
+# pkg-url renders (confirmed the hard way on edikt 0.2.7). { name } happens
+# to equal the binary name here.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ os-name }-{ target-arch }{ archive-suffix }"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [dependencies]
 penknife-gist = { path = "../penknife-gist", version = "0.2.1" }
