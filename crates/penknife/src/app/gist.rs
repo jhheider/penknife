@@ -1409,7 +1409,7 @@ mod handler_tests {
     fn delete_done_ok_confirmation_survives_with_file_selected() {
         let _g = guard();
         let (_d, mut app, root) = app3();
-        app.store
+        app.store_mut()
             .insert(&root, "a.md".into(), entry("g1", "x", "x"));
         // Select the just-deleted file so update_status() would set its
         // status line; the "Deleted gist" confirmation must still win.
