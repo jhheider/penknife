@@ -19,6 +19,7 @@ pub fn hints(mode: &Mode, focused_pane: PaneFocus) -> Vec<Hint> {
                 ("d", "pull"),
                 ("D", "diff"),
                 ("e", "edit"),
+                ("J", "newest"),
                 ("/", "files"),
                 ("f", "find"),
                 ("B", "bulk"),

@@ -143,6 +143,7 @@ pub(crate) fn new_for_test(root: &Path, tx: AsyncSender) -> App {
         last_local_sweep: Some(Instant::now()),
         startup_hydrate_done: false,
         refresh_generation: 0,
+        pending_select_newest: None,
         scanning: false,
         scan_count: 0,
     };

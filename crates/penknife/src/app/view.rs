@@ -364,6 +364,26 @@ impl App {
             }
         }
 
+        // Correction pass for `jump_to_newest`: its immediate jump ran on the
+        // previous sweep's mtimes, which may predate a save that just happened,
+        // so once *that* refresh's own scan lands, follow a newest file that
+        // changed under it. Only the tagged generation consumes the request
+        // (a superseding refresh's result is a different promise), and only in
+        // Normal mode, so a dialog or diff never has the cursor yanked away.
+        // (Cloning the pair out keeps the borrow of the field short; it fires
+        // once per `J`, so the copy is nothing.)
+        if let Some((want_gen, prev)) = self.pending_select_newest.clone()
+            && want_gen == generation
+        {
+            self.pending_select_newest = None;
+            if matches!(self.mode, Mode::Normal)
+                && let Some(newest) = self.newest_file()
+                && newest != prev
+            {
+                self.jump_to(&newest);
+            }
+        }
+
         if let Some(msg) = done_message {
             self.status_message = msg;
         }
@@ -720,6 +740,41 @@ impl App {
         };
         self.jump_to(&rel_path);
     }
+
+    /// The most recently modified scanned file, independent of the active
+    /// sort order (an alphabetical sort buries the newest file wherever its
+    /// name happens to land).
+    fn newest_file(&self) -> Option<String> {
+        self.files
+            .iter()
+            .max_by_key(|f| f.modified)
+            .map(|f| f.rel_path.clone())
+    }
+
+    /// Select the most recently modified file in the active root, expanding
+    /// whatever directories currently hide it: the "I just finished writing
+    /// this, now push it" jump, one `J` then one `u`.
+    ///
+    /// The immediate jump uses the last sweep's mtimes, and the sweep only
+    /// runs every few seconds, so a file saved moments ago may not be in it
+    /// yet (or may look older than it is). This therefore also kicks a user
+    /// refresh and re-jumps if a different file turns out to be newest when
+    /// that scan lands; see the correction pass in [`App::apply_refresh`].
+    pub(crate) fn jump_to_newest(&mut self) {
+        if self.current_root().is_none() {
+            return;
+        }
+        let Some(rel_path) = self.newest_file() else {
+            self.status_message = "No files yet.".into();
+            return;
+        };
+        self.jump_to(&rel_path);
+        self.start_refresh(Refresh::User {
+            select: None,
+            done_message: None,
+        });
+        self.pending_select_newest = Some((self.refresh_generation, rel_path));
+    }
 }
 
 /// Bucket a cached sync status for sort ordering. Lower = appears first.
@@ -977,6 +1032,147 @@ mod tests {
             .insert("b.md".into(), sync::SyncStatus::LocalNewer);
         app.jump_to_next_dirty(false);
         assert_eq!(app.selected_file().as_deref(), Some("b.md"));
+    }
+
+    // ── jump_to_newest ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn jump_to_newest_selects_most_recent_file() {
+        let (_d, mut app) = app3();
+        // Newest in the middle of an alphabetical order, to prove the jump is
+        // mtime-driven rather than position-driven.
+        app.files = vec![sf("a.md", 50), sf("b.md", 10), sf("sub/c.md", 30)];
+        app.config.sort.mode = SortMode::AlphaAsc;
+        app.rebuild_tree();
+        app.focused_pane = PaneFocus::Right;
+        app.jump_to_newest();
+        assert_eq!(app.selected_file().as_deref(), Some("a.md"));
+        // Like every jump, it pulls focus back to the tree.
+        assert_eq!(app.focused_pane, PaneFocus::Tree);
+    }
+
+    #[tokio::test]
+    async fn jump_to_newest_expands_ancestors_for_nested_file() {
+        let (_d, mut app) = app3();
+        app.files = vec![sf("a.md", 10), sf("b.md", 20), sf("sub/deep/c.md", 99)];
+        app.rebuild_tree();
+        app.jump_to_newest();
+        assert_eq!(app.selected_file().as_deref(), Some("sub/deep/c.md"));
+    }
+
+    #[test]
+    fn jump_to_newest_without_files_reports() {
+        let (_d, mut app) = app3();
+        app.files.clear();
+        app.rebuild_tree();
+        app.jump_to_newest();
+        assert_eq!(app.status_message, "No files yet.");
+    }
+
+    #[tokio::test]
+    async fn refresh_landing_updates_jump_to_newest_target() {
+        let (_d, mut app) = app3();
+        app.files = vec![sf("a.md", 10)];
+        app.rebuild_tree();
+        app.jump_to_newest();
+        assert_eq!(app.selected_file().as_deref(), Some("a.md"));
+        let want_gen = app.refresh_generation;
+        assert_eq!(app.pending_select_newest, Some((want_gen, "a.md".into())));
+
+        // The refresh lands with a file saved after the last sweep: the
+        // selection follows the new newest.
+        let fresh = vec![sf("a.md", 10), sf("notes/session.md", 40)];
+        app.apply_refresh(
+            want_gen,
+            app.active_root_path().unwrap(),
+            fresh,
+            HashMap::new(),
+            None,
+            HashMap::new(),
+            None,
+            false,
+            None,
+        );
+        assert_eq!(app.selected_file().as_deref(), Some("notes/session.md"));
+        assert!(app.pending_select_newest.is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_landing_same_newest_keeps_selection() {
+        let (_d, mut app) = app3();
+        app.files = vec![sf("a.md", 10), sf("b.md", 5)];
+        app.rebuild_tree();
+        app.jump_to_newest();
+        assert_eq!(app.selected_file().as_deref(), Some("a.md"));
+        let want_gen = app.refresh_generation;
+
+        // Nothing newer turned up: stay put (no jump, flag consumed).
+        app.apply_refresh(
+            want_gen,
+            app.active_root_path().unwrap(),
+            vec![sf("a.md", 10), sf("b.md", 5)],
+            HashMap::new(),
+            None,
+            HashMap::new(),
+            None,
+            false,
+            None,
+        );
+        assert_eq!(app.selected_file().as_deref(), Some("a.md"));
+        assert!(app.pending_select_newest.is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_landing_in_modal_mode_skips_correction() {
+        let (_d, mut app) = app3();
+        app.files = vec![sf("a.md", 10)];
+        app.rebuild_tree();
+        app.jump_to_newest();
+        let want_gen = app.refresh_generation;
+        // The user opened help before the refresh landed.
+        app.mode = Mode::Help;
+
+        app.apply_refresh(
+            want_gen,
+            app.active_root_path().unwrap(),
+            vec![sf("a.md", 10), sf("notes/session.md", 40)],
+            HashMap::new(),
+            None,
+            HashMap::new(),
+            None,
+            false,
+            None,
+        );
+        // Selection untouched; the request was dropped, not deferred.
+        assert_eq!(app.selected_file().as_deref(), Some("a.md"));
+        assert!(app.pending_select_newest.is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_from_other_generation_leaves_correction_pending() {
+        let (_d, mut app) = app3();
+        app.files = vec![sf("a.md", 10)];
+        app.rebuild_tree();
+        app.jump_to_newest();
+        let want_gen = app.refresh_generation;
+        // A different refresh (say a sweep that superseded J's own) lands
+        // first: it must not consume or act on the pending correction.
+        app.refresh_generation += 1;
+        app.apply_refresh(
+            want_gen + 1,
+            app.active_root_path().unwrap(),
+            vec![sf("a.md", 10), sf("notes/session.md", 40)],
+            HashMap::new(),
+            None,
+            HashMap::new(),
+            None,
+            false,
+            None,
+        );
+        // The scan result applied (newest is session.md) but no correction
+        // jumped to it, and the pending request is still intact.
+        assert_eq!(app.selected_file().as_deref(), Some("a.md"));
+        assert_eq!(app.pending_select_newest, Some((want_gen, "a.md".into())));
     }
 
     // ── handle_mouse ────────────────────────────────────────────────────

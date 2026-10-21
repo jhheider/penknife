@@ -70,6 +70,7 @@ pub fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 ("h  ←  Bksp", "Collapse (tree pane)"),
                 ("PgUp/PgDn", "Scroll preview/diff (any focus)"),
                 ("n / N", "Jump to next / previous non-synced file"),
+                ("J", "Jump to the newest file (most recently modified)"),
             ],
         ),
         (

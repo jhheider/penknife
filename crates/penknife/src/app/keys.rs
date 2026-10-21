@@ -85,6 +85,9 @@ impl App {
             KeyCode::Char('N') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.jump_to_next_dirty(false);
             }
+            KeyCode::Char('J') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.jump_to_newest();
+            }
             KeyCode::Char('D') if !key.modifiers.contains(KeyModifiers::CONTROL) => self.do_diff(),
             KeyCode::Char('m') => self.start_rename(),
             KeyCode::Char('L') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -947,6 +950,15 @@ mod tests {
         select(&mut app, "a.md");
         app.handle_key(ch('u'));
         assert_eq!(app.status_message, crate::app::NO_TOKEN_HINT);
+    }
+
+    #[tokio::test]
+    async fn normal_shift_j_jumps_to_newest() {
+        let (_d, mut app) = app_with_files();
+        assert!(app.selected_file().is_none());
+        app.handle_key(ch('J'));
+        assert!(app.selected_file().is_some());
+        assert!(app.pending_select_newest.is_some());
     }
 
     // ── handle_picker_key ───────────────────────────────────────────────

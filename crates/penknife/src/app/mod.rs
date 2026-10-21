@@ -219,9 +219,9 @@ pub(crate) enum Refresh {
     /// Periodic local sweep: no progress, and drop the result unless the file
     /// set actually changed on disk.
     Sweep,
-    /// A user-initiated refresh (root switch, `r`, a file op): always apply.
-    /// `select` re-selects a path after applying (post-rename); `done_message`
-    /// is the status line to show once the refresh lands.
+    /// A user-initiated refresh (root switch, `J` jump-to-newest, a file op):
+    /// always apply. `select` re-selects a path after applying (post-rename);
+    /// `done_message` is the status line to show once the refresh lands.
     User {
         select: Option<String>,
         done_message: Option<String>,
@@ -336,6 +336,14 @@ pub struct App {
     /// the current value, so a slow refresh superseded by a newer one (root
     /// switch, another sweep) is discarded instead of clobbering fresh state.
     pub refresh_generation: u64,
+    /// Set by `jump_to_newest` (with the generation of the refresh it spawned
+    /// and the rel_path it already selected): when that refresh lands, re-jump
+    /// if a different file is now the newest. The immediate jump runs on the
+    /// last sweep's mtimes, which can predate a save that just happened, so
+    /// this is the correction pass that catches the file you finished writing
+    /// seconds ago. Cleared without effect once consumed or if the user has
+    /// entered a modal state by the time the refresh lands.
+    pub pending_select_newest: Option<(u64, String)>,
     /// True while the startup scan is in flight. The tree pane shows a
     /// `dua`-style scanning indicator instead of an empty tree until the first
     /// refresh lands, and the periodic sweep/hydration hold off until it does.
@@ -387,7 +395,7 @@ pub(crate) fn files_fingerprint(files: &[ScannedFile]) -> u64 {
 /// time and reported in the status bar.
 const RESERVED_KEYS: &[char] = &[
     'q', '?', '/', 'j', 'k', 'l', 'h', 'u', 'd', 'c', 'C', 'V', 'e', 'o', 'X', 'n', 'N', 'D', 'M',
-    'R', 'I', 's', 'm', 'O', 'B', 'g', 'L', 'f', 'p',
+    'R', 'I', 's', 'm', 'O', 'B', 'g', 'L', 'f', 'p', 'J',
 ];
 
 impl App {
@@ -489,6 +497,7 @@ impl App {
             last_local_sweep: Some(Instant::now()),
             startup_hydrate_done: false,
             refresh_generation: 0,
+            pending_select_newest: None,
             scanning: false,
             scan_count: 0,
         };

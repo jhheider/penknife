@@ -99,6 +99,7 @@ Press `?` in the app for this list any time. The essentials:
 | `V` | Paste clipboard text as a new file (rich HTML becomes markdown) |
 | `C` | Copy the file's raw markdown to the clipboard |
 | `/` | Fuzzy jump to a file by name |
+| `J` | Jump to the newest file (the one most recently modified) |
 | `R` | Switch to another watched folder |
 | `?` | Full help; `q` quits |
 
